@@ -83,9 +83,38 @@ The application automatically configures:
 4. Execute applications from the build directory
 5. For Python integration issues, ensure CPython is properly built in `third_party/cpython/`
 
+## TCP Data Injection Architecture
+
+The project supports real-time data injection into the Python REPL via TCP:
+
+### Design Overview
+
+1. **TCP Server Thread**: A separate C++ thread runs a TCP server listening on a configurable port
+2. **Message Protocol**: Each TCP message contains:
+   - Header: JSON metadata describing data type and target variable name
+   - Payload: Serialized data (JSON, binary, or custom format)
+3. **Python Integration**: Received data is injected directly into Python's global namespace using the Python C API
+4. **Thread Safety**: Proper GIL (Global Interpreter Lock) handling for thread-safe Python object creation
+
+### Implementation Flow
+
+```
+TCP Client → [Header + Data] → C++ TCP Thread → Python C API → Python Global Namespace → Available in REPL
+```
+
+Example: Client sends `{"type": "int_list", "name": "received_data"}` + `[1,2,3,4,5]` → Python REPL user can immediately access `received_data` variable.
+
+### Key Considerations
+
+- **GIL Management**: TCP thread must acquire/release GIL when injecting Python objects
+- **Serialization**: Support multiple formats (JSON for simple data, pickle for Python objects, custom binary for performance)
+- **Error Handling**: Graceful handling of malformed data or Python injection failures
+- **Memory Management**: Proper Python reference counting for injected objects
+
 ## Important Notes
 
 - The Python interpreter runs in the same process as the C++ application
 - Python path is set relative to the executable location
 - All Python objects require proper reference counting and cleanup
 - The integration supports full bidirectional data exchange between C++ and Python
+- TCP data injection requires careful thread synchronization due to Python's GIL

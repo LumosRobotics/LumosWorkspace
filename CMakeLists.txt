@@ -43,3 +43,5 @@ add_compile_options(-Wall -Wextra -pedantic)
 enable_testing()
 
 add_subdirectory(src/applications/simple)
+add_subdirectory(src/applications/repl)
+add_subdirectory(src/applications/simple_transmitter)
