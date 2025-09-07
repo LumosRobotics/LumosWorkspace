@@ -79,8 +79,8 @@ int main(int argc, char* argv[]) {
     std::cout << "Simple TCP Transmitter" << std::endl;
     std::cout << "Target: " << host << ":" << port << std::endl;
     std::cout << "Commands:" << std::endl;
-    std::cout << "  list <name> - Send a list of integers as <name>" << std::endl;
-    std::cout << "  string <name> <value> - Send a string value as <name>" << std::endl;
+    std::cout << "  list [name] - Send a list of integers (optional name)" << std::endl;
+    std::cout << "  string [name] <value> - Send a string value (optional name)" << std::endl;
     std::cout << "  quit - Exit" << std::endl;
     std::cout << std::endl;
     
@@ -94,37 +94,56 @@ int main(int argc, char* argv[]) {
         }
         
         if (command.substr(0, 4) == "list") {
-            std::string name = "test_list";
+            std::string header;
             if (command.size() > 5) {
-                name = command.substr(5);
+                // Name provided
+                std::string name = command.substr(5);
+                header = "{\"type\": \"int_list\", \"name\": \"" + name + "\"}";
+            } else {
+                // No name provided - let receiver generate random name
+                header = "{\"type\": \"int_list\"}";
             }
             
-            std::string header = "{\"type\": \"int_list\", \"name\": \"" + name + "\"}";
             std::string payload = "[1, 2, 3, 4, 5, 42, 100]";
             
             if (sendMessage(host, port, header, payload)) {
-                std::cout << "Sent integer list '" << name << "'" << std::endl;
+                if (command.size() > 5) {
+                    std::cout << "Sent integer list with name '" << command.substr(5) << "'" << std::endl;
+                } else {
+                    std::cout << "Sent integer list (random name will be assigned)" << std::endl;
+                }
             } else {
                 std::cout << "Failed to send message" << std::endl;
             }
         }
         else if (command.substr(0, 6) == "string") {
-            std::string rest = command.substr(7);
-            size_t space_pos = rest.find(' ');
+            std::string header;
+            std::string payload;
             
-            std::string name = "test_string";
-            std::string value = "hello world";
-            
-            if (space_pos != std::string::npos) {
-                name = rest.substr(0, space_pos);
-                value = rest.substr(space_pos + 1);
+            if (command.size() > 7) {
+                std::string rest = command.substr(7);
+                size_t space_pos = rest.find(' ');
+                
+                if (space_pos != std::string::npos) {
+                    // Both name and value provided
+                    std::string name = rest.substr(0, space_pos);
+                    std::string value = rest.substr(space_pos + 1);
+                    header = "{\"type\": \"string\", \"name\": \"" + name + "\"}";
+                    payload = "\"" + value + "\"";
+                } else {
+                    // Only value provided, no name
+                    std::string value = rest;
+                    header = "{\"type\": \"string\"}";
+                    payload = "\"" + value + "\"";
+                }
+            } else {
+                // No name or value provided
+                header = "{\"type\": \"string\"}";
+                payload = "\"hello world\"";
             }
             
-            std::string header = "{\"type\": \"string\", \"name\": \"" + name + "\"}";
-            std::string payload = "\"" + value + "\"";
-            
             if (sendMessage(host, port, header, payload)) {
-                std::cout << "Sent string '" << name << "' = '" << value << "'" << std::endl;
+                std::cout << "Sent string successfully" << std::endl;
             } else {
                 std::cout << "Failed to send message" << std::endl;
             }

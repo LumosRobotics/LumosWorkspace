@@ -27,6 +27,10 @@ include_directories(${CMAKE_SOURCE_DIR}/third_party/cpython/Include)
 include_directories(${CMAKE_SOURCE_DIR}/third_party/cpython)
 link_directories(${CMAKE_SOURCE_DIR}/third_party/cpython)
 
+# Qt6
+set(CMAKE_PREFIX_PATH "/usr/local/opt/qt/lib/cmake")
+find_package(Qt6 COMPONENTS Core Widgets QUIET)
+
 # Nlohmann
 # include_directories(${CMAKE_SOURCE_DIR}/third_party/nlohmann/include)
 
@@ -45,3 +49,11 @@ enable_testing()
 add_subdirectory(src/applications/simple)
 add_subdirectory(src/applications/repl)
 add_subdirectory(src/applications/simple_transmitter)
+
+# Only add repl_gui if Qt6 is found
+if(Qt6_FOUND)
+    add_subdirectory(src/applications/repl_gui)
+    message(STATUS "Building repl_gui with Qt6")
+else()
+    message(STATUS "Qt6 not found, skipping repl_gui")
+endif()
