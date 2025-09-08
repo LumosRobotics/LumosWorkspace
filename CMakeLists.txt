@@ -8,6 +8,9 @@ project(LumosWorkspace C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Debug options
+option(ENABLE_DEBUG_PORT "Enable debug TCP port for GUI testing" ON)
+
 # Optionally enable debugging support
 set(CMAKE_BUILD_TYPE Debug)
 
@@ -54,6 +57,7 @@ add_subdirectory(src/modules/settings_handler)
 add_subdirectory(src/applications/simple)
 add_subdirectory(src/applications/repl)
 add_subdirectory(src/applications/simple_transmitter)
+add_subdirectory(src/applications/gui_test)
 
 # Only add repl_gui if Qt6 is found
 if(Qt6_FOUND)

@@ -9,6 +9,12 @@ set(CPP_SOURCE_FILES
     main.cpp 
 )
 
+# Add debug server files if enabled
+if(ENABLE_DEBUG_PORT)
+    list(APPEND CPP_SOURCE_FILES debug_tcp_server.cpp)
+    add_definitions(-DENABLE_DEBUG_PORT)
+endif()
+
 add_executable(repl_gui ${CPP_SOURCE_FILES})
 
 # Qt6 setup

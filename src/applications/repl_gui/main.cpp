@@ -18,6 +18,9 @@
 #include <QFrame>
 #include "../../modules/tcp_server/tcp_server.h"
 #include "../../modules/settings_handler/settings_handler.h"
+#ifdef ENABLE_DEBUG_PORT
+#include "debug_tcp_server.h"
+#endif
 #include <vector>
 #include <string>
 #include <random>
@@ -257,6 +260,17 @@ private slots:
     void executeCommand();
     void updateVariables();
 
+#ifdef ENABLE_DEBUG_PORT
+public:
+    // Debug API methods for testing
+    std::string executeCodeForTesting(const std::string &code);
+    std::string getCurrentOutputForTesting() const;
+    std::vector<std::string> getVariablesForTesting() const;
+    void clearOutputForTesting();
+    std::string getInputTextForTesting() const;
+    void setInputTextForTesting(const std::string &text);
+#endif
+
 private:
     QTextEdit *outputArea;
     QLineEdit *inputLine;
@@ -266,6 +280,9 @@ private:
     QString customFontFamily;
     CustomTitleBar *titleBar;
     std::unique_ptr<SettingsHandler> settingsHandler;
+#ifdef ENABLE_DEBUG_PORT
+    std::unique_ptr<DebugTcpServer> debugServer;
+#endif
 
     void setupUI();
     void initializePython();
@@ -285,7 +302,7 @@ PythonREPLWidget::PythonREPLWidget(QWidget *parent)
     // Initialize settings handler
     settingsHandler = std::make_unique<SettingsHandler>("LumosWorkspace");
     loadSettings();
-    
+
     loadFonts();
     setupUI();
     initializePython();
@@ -297,11 +314,7 @@ PythonREPLWidget::PythonREPLWidget(QWidget *parent)
         this->injectPythonVariable(header, payload);
     };
 
-    if (tcpServer->start())
-    {
-        outputArea->append("TCP server started on port 8080");
-    }
-    else
+    if (!tcpServer->start())
     {
         outputArea->append("Failed to start TCP server");
     }
@@ -312,13 +325,29 @@ PythonREPLWidget::PythonREPLWidget(QWidget *parent)
     updateTimer->start(1000); // Update every second
 
     updateVariables(); // Initial update
+
+#ifdef ENABLE_DEBUG_PORT
+    // Start debug server
+    debugServer = std::make_unique<DebugTcpServer>(8081, this);
+    if (!debugServer->start())
+    {
+        outputArea->append("Failed to start debug server");
+    }
+#endif
 }
 
 PythonREPLWidget::~PythonREPLWidget()
 {
     // Save settings before destroying
     saveSettings();
-    
+
+#ifdef ENABLE_DEBUG_PORT
+    if (debugServer)
+    {
+        debugServer->stop();
+    }
+#endif
+
     if (tcpServer)
     {
         tcpServer->stop();
@@ -442,8 +471,6 @@ void PythonREPLWidget::setupUI()
 
     mainLayout->addWidget(splitter);
 
-    outputArea->append("Python REPL with TCP Integration");
-    outputArea->append("Type Python commands below. TCP server listening on port 8080.");
     outputArea->append(">>> ");
 }
 
@@ -489,8 +516,6 @@ sys.stderr = _qt_stdout
 )";
 
     PyRun_SimpleString(stdout_redirect_code);
-
-    outputArea->append("Python interpreter initialized");
 }
 
 void PythonREPLWidget::loadFonts()
@@ -840,29 +865,32 @@ std::string PythonREPLWidget::evaluatePythonExpression(const std::string &expres
 
 void PythonREPLWidget::loadSettings()
 {
-    if (!settingsHandler) return;
-    
+    if (!settingsHandler)
+        return;
+
     // Load window geometry
     int width = settingsHandler->getInt("window.width", 800);
     int height = settingsHandler->getInt("window.height", 600);
     int x = settingsHandler->getInt("window.x", -1);
     int y = settingsHandler->getInt("window.y", -1);
-    
+
     resize(width, height);
-    if (x >= 0 && y >= 0) {
+    if (x >= 0 && y >= 0)
+    {
         move(x, y);
     }
-    
+
     // Load TCP server port
     int tcpPort = settingsHandler->getInt("tcp.port", 8080);
     // Note: TCP port will be used when creating the server
-    
+
     // Load UI preferences
     std::string fontFamily = settingsHandler->getString("ui.font_family", "");
-    if (!fontFamily.empty()) {
+    if (!fontFamily.empty())
+    {
         customFontFamily = QString::fromStdString(fontFamily);
     }
-    
+
     // Load splitter sizes
     std::vector<int> splitterSizes = settingsHandler->getSetting<std::vector<int>>("ui.splitter_sizes", std::vector<int>{600, 200});
     // Note: Splitter sizes will be applied in setupUI()
@@ -870,37 +898,189 @@ void PythonREPLWidget::loadSettings()
 
 void PythonREPLWidget::saveSettings()
 {
-    if (!settingsHandler) return;
-    
+    if (!settingsHandler)
+        return;
+
     // Save window geometry
     settingsHandler->setInt("window.width", width());
     settingsHandler->setInt("window.height", height());
     settingsHandler->setInt("window.x", x());
     settingsHandler->setInt("window.y", y());
     settingsHandler->setBool("window.maximized", isMaximized());
-    
+
     // Save TCP server port (if we ever make it configurable)
-    if (tcpServer) {
+    if (tcpServer)
+    {
         // For now, just save the default port
         settingsHandler->setInt("tcp.port", 8080);
     }
-    
+
     // Save UI preferences
-    if (!customFontFamily.isEmpty()) {
+    if (!customFontFamily.isEmpty())
+    {
         settingsHandler->setString("ui.font_family", customFontFamily.toStdString());
     }
-    
+
     // Save splitter sizes (we'd need to access the splitter for this)
     // For now, just save default values
     std::vector<int> defaultSizes = {600, 200};
     settingsHandler->setSetting("ui.splitter_sizes", defaultSizes);
-    
+
     // Force save to file
     settingsHandler->saveSettings();
 }
 
-void signalHandler(int signal) {
-    if (signal == SIGINT) {
+#ifdef ENABLE_DEBUG_PORT
+// Debug API methods for testing
+std::string PythonREPLWidget::executeCodeForTesting(const std::string &code)
+{
+    // Execute the code and return the result
+    // This should be called from the main thread
+    QString qcode = QString::fromStdString(code);
+
+    // Set the input text
+    inputLine->setText(qcode);
+
+    // Trigger execution
+    executeCommand();
+
+    // Return the current output
+    return outputArea->toPlainText().toStdString();
+}
+
+std::string PythonREPLWidget::getCurrentOutputForTesting() const
+{
+    return outputArea->toPlainText().toStdString();
+}
+
+std::vector<std::string> PythonREPLWidget::getVariablesForTesting() const
+{
+    std::vector<std::string> vars;
+    for (int i = 0; i < variablesList->count(); ++i)
+    {
+        QListWidgetItem *item = variablesList->item(i);
+        if (item)
+        {
+            vars.push_back(item->text().toStdString());
+        }
+    }
+    return vars;
+}
+
+void PythonREPLWidget::clearOutputForTesting()
+{
+    outputArea->clear();
+    outputArea->append(">>> ");
+}
+
+std::string PythonREPLWidget::getInputTextForTesting() const
+{
+    return inputLine->text().toStdString();
+}
+
+void PythonREPLWidget::setInputTextForTesting(const std::string &text)
+{
+    inputLine->setText(QString::fromStdString(text));
+}
+
+// Debug TCP Server processCommand implementation
+nlohmann::json DebugTcpServer::processCommand(const nlohmann::json &command)
+{
+    if (!replWidget)
+    {
+        return {
+            {"status", "error"},
+            {"message", "REPL widget not available"}};
+    }
+
+    std::string cmd = command.value("command", "");
+
+    if (cmd == "execute")
+    {
+        std::string code = command.value("code", "");
+        if (code.empty())
+        {
+            return {
+                {"status", "error"},
+                {"message", "Missing 'code' parameter"}};
+        }
+
+        std::string result;
+        QMetaObject::invokeMethod(replWidget, [&]()
+                                  { result = replWidget->executeCodeForTesting(code); }, Qt::BlockingQueuedConnection);
+
+        return {
+            {"status", "success"},
+            {"result", result}};
+    }
+    else if (cmd == "get_output")
+    {
+        std::string output;
+        QMetaObject::invokeMethod(replWidget, [&]()
+                                  { output = replWidget->getCurrentOutputForTesting(); }, Qt::BlockingQueuedConnection);
+
+        return {
+            {"status", "success"},
+            {"output", output}};
+    }
+    else if (cmd == "get_variables")
+    {
+        std::vector<std::string> variables;
+        QMetaObject::invokeMethod(replWidget, [&]()
+                                  { variables = replWidget->getVariablesForTesting(); }, Qt::BlockingQueuedConnection);
+
+        return {
+            {"status", "success"},
+            {"variables", variables}};
+    }
+    else if (cmd == "clear_output")
+    {
+        QMetaObject::invokeMethod(replWidget, [&]()
+                                  { replWidget->clearOutputForTesting(); }, Qt::BlockingQueuedConnection);
+
+        return {
+            {"status", "success"},
+            {"message", "Output cleared"}};
+    }
+    else if (cmd == "get_input")
+    {
+        std::string input;
+        QMetaObject::invokeMethod(replWidget, [&]()
+                                  { input = replWidget->getInputTextForTesting(); }, Qt::BlockingQueuedConnection);
+
+        return {
+            {"status", "success"},
+            {"input", input}};
+    }
+    else if (cmd == "set_input")
+    {
+        std::string inputText = command.value("text", "");
+        QMetaObject::invokeMethod(replWidget, [&]()
+                                  { replWidget->setInputTextForTesting(inputText); }, Qt::BlockingQueuedConnection);
+
+        return {
+            {"status", "success"},
+            {"message", "Input text set"}};
+    }
+    else if (cmd == "ping")
+    {
+        return {
+            {"status", "success"},
+            {"message", "pong"}};
+    }
+    else
+    {
+        return {
+            {"status", "error"},
+            {"message", "Unknown command: " + cmd}};
+    }
+}
+#endif // ENABLE_DEBUG_PORT
+
+void signalHandler(int signal)
+{
+    if (signal == SIGINT)
+    {
         QApplication::quit();
     }
 }
