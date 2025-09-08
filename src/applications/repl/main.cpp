@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <Python.h>
-#include "tcp_server.h"
+#include "../../modules/tcp_server/tcp_server.h"
 #include <random>
 #include <chrono>
 #include <mutex>

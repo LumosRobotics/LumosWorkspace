@@ -4,3 +4,6 @@
 [submodule "third_party/cpython"]
 	path = third_party/cpython
 	url = git@github.com:python/cpython.git
+[submodule "third_party/nlohmann"]
+	path = third_party/nlohmann
+	url = git@github.com:nlohmann/json.git

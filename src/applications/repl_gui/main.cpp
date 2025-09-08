@@ -16,11 +16,14 @@
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QFrame>
-#include "tcp_server.h"
+#include "../../modules/tcp_server/tcp_server.h"
+#include "../../modules/settings_handler/settings_handler.h"
 #include <vector>
 #include <string>
 #include <random>
 #include <sstream>
+#include <memory>
+#include <signal.h>
 
 QString loadCustomFont(const QString &fontPath)
 {
@@ -70,6 +73,7 @@ public:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
 
 private slots:
@@ -182,12 +186,20 @@ void CustomTitleBar::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_dragging && (event->buttons() & Qt::LeftButton))
     {
-        QMainWindow *parentWindow = qobject_cast<QMainWindow *>(parent());
-        if (parentWindow)
+        QWidget *topLevelWidget = window();
+        if (topLevelWidget)
         {
-            parentWindow->move(parentWindow->pos() + event->globalPosition().toPoint() - m_startPos);
+            topLevelWidget->move(topLevelWidget->pos() + event->globalPosition().toPoint() - m_startPos);
             m_startPos = event->globalPosition().toPoint();
         }
+    }
+}
+
+void CustomTitleBar::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+    {
+        m_dragging = false;
     }
 }
 
@@ -201,34 +213,34 @@ void CustomTitleBar::mouseDoubleClickEvent(QMouseEvent *event)
 
 void CustomTitleBar::onCloseClicked()
 {
-    QMainWindow *parentWindow = qobject_cast<QMainWindow *>(parent());
-    if (parentWindow)
+    QWidget *topLevelWidget = window();
+    if (topLevelWidget)
     {
-        parentWindow->close();
+        topLevelWidget->close();
     }
 }
 
 void CustomTitleBar::onMinimizeClicked()
 {
-    QMainWindow *parentWindow = qobject_cast<QMainWindow *>(parent());
-    if (parentWindow)
+    QWidget *topLevelWidget = window();
+    if (topLevelWidget)
     {
-        parentWindow->showMinimized();
+        topLevelWidget->showMinimized();
     }
 }
 
 void CustomTitleBar::onMaximizeClicked()
 {
-    QMainWindow *parentWindow = qobject_cast<QMainWindow *>(parent());
-    if (parentWindow)
+    QWidget *topLevelWidget = window();
+    if (topLevelWidget)
     {
-        if (parentWindow->isMaximized())
+        if (topLevelWidget->isMaximized())
         {
-            parentWindow->showNormal();
+            topLevelWidget->showNormal();
         }
         else
         {
-            parentWindow->showMaximized();
+            topLevelWidget->showMaximized();
         }
     }
 }
@@ -253,10 +265,13 @@ private:
     TCPServer *tcpServer;
     QString customFontFamily;
     CustomTitleBar *titleBar;
+    std::unique_ptr<SettingsHandler> settingsHandler;
 
     void setupUI();
     void initializePython();
     void loadFonts();
+    void loadSettings();
+    void saveSettings();
     void injectPythonVariable(const std::string &header, const std::string &payload);
     std::vector<std::string> getUserVariables();
     std::string parseJsonValue(const std::string &json, const std::string &key);
@@ -267,6 +282,10 @@ private:
 PythonREPLWidget::PythonREPLWidget(QWidget *parent)
     : QMainWindow(parent), tcpServer(nullptr)
 {
+    // Initialize settings handler
+    settingsHandler = std::make_unique<SettingsHandler>("LumosWorkspace");
+    loadSettings();
+    
     loadFonts();
     setupUI();
     initializePython();
@@ -297,6 +316,9 @@ PythonREPLWidget::PythonREPLWidget(QWidget *parent)
 
 PythonREPLWidget::~PythonREPLWidget()
 {
+    // Save settings before destroying
+    saveSettings();
+    
     if (tcpServer)
     {
         tcpServer->stop();
@@ -361,7 +383,7 @@ void PythonREPLWidget::setupUI()
         "QLineEdit {"
         "    background-color: #202A34;"
         "    color: #CCCCCC;" // Light gray text
-        "    border: 1px solid #333333;"
+        "    border: 1px solid #555555;"
         "    border-radius: 6px;"
         "    padding: 6px 10px;"
         "}");
@@ -382,7 +404,7 @@ void PythonREPLWidget::setupUI()
     QFrame *line = new QFrame();
     line->setFrameShape(QFrame::HLine);
     line->setFrameShadow(QFrame::Plain);
-    line->setStyleSheet("QFrame { color: #333333; background-color: #333333; }");
+    line->setStyleSheet("QFrame { color: #555555; background-color: #555555; }");
     line->setFixedHeight(1);
     variablesLayout->addWidget(line);
 
@@ -397,7 +419,7 @@ void PythonREPLWidget::setupUI()
         "}"
         "QListWidget::item {"
         "    padding: 2px;"
-        "    border-bottom: 1px solid #222222;"
+        "    border-bottom: 1px solid #444444;"
         "}"
         "QListWidget::item:selected {"
         "    background-color: #444444;"
@@ -411,7 +433,7 @@ void PythonREPLWidget::setupUI()
         "    background-color: #202A34;"
         "}"
         "QSplitter::handle {"
-        "    background-color: #333333;"
+        "    background-color: #555555;"
         "    width: 1px;"
         "}");
     splitter->addWidget(replWidget);
@@ -816,9 +838,79 @@ std::string PythonREPLWidget::evaluatePythonExpression(const std::string &expres
     return output;
 }
 
+void PythonREPLWidget::loadSettings()
+{
+    if (!settingsHandler) return;
+    
+    // Load window geometry
+    int width = settingsHandler->getInt("window.width", 800);
+    int height = settingsHandler->getInt("window.height", 600);
+    int x = settingsHandler->getInt("window.x", -1);
+    int y = settingsHandler->getInt("window.y", -1);
+    
+    resize(width, height);
+    if (x >= 0 && y >= 0) {
+        move(x, y);
+    }
+    
+    // Load TCP server port
+    int tcpPort = settingsHandler->getInt("tcp.port", 8080);
+    // Note: TCP port will be used when creating the server
+    
+    // Load UI preferences
+    std::string fontFamily = settingsHandler->getString("ui.font_family", "");
+    if (!fontFamily.empty()) {
+        customFontFamily = QString::fromStdString(fontFamily);
+    }
+    
+    // Load splitter sizes
+    std::vector<int> splitterSizes = settingsHandler->getSetting<std::vector<int>>("ui.splitter_sizes", std::vector<int>{600, 200});
+    // Note: Splitter sizes will be applied in setupUI()
+}
+
+void PythonREPLWidget::saveSettings()
+{
+    if (!settingsHandler) return;
+    
+    // Save window geometry
+    settingsHandler->setInt("window.width", width());
+    settingsHandler->setInt("window.height", height());
+    settingsHandler->setInt("window.x", x());
+    settingsHandler->setInt("window.y", y());
+    settingsHandler->setBool("window.maximized", isMaximized());
+    
+    // Save TCP server port (if we ever make it configurable)
+    if (tcpServer) {
+        // For now, just save the default port
+        settingsHandler->setInt("tcp.port", 8080);
+    }
+    
+    // Save UI preferences
+    if (!customFontFamily.isEmpty()) {
+        settingsHandler->setString("ui.font_family", customFontFamily.toStdString());
+    }
+    
+    // Save splitter sizes (we'd need to access the splitter for this)
+    // For now, just save default values
+    std::vector<int> defaultSizes = {600, 200};
+    settingsHandler->setSetting("ui.splitter_sizes", defaultSizes);
+    
+    // Force save to file
+    settingsHandler->saveSettings();
+}
+
+void signalHandler(int signal) {
+    if (signal == SIGINT) {
+        QApplication::quit();
+    }
+}
+
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+
+    // Install signal handler for Ctrl+C
+    signal(SIGINT, signalHandler);
 
     PythonREPLWidget window;
     window.show();

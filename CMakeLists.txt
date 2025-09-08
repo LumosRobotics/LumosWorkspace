@@ -32,7 +32,7 @@ set(CMAKE_PREFIX_PATH "/usr/local/opt/qt/lib/cmake")
 find_package(Qt6 COMPONENTS Core Widgets QUIET)
 
 # Nlohmann
-# include_directories(${CMAKE_SOURCE_DIR}/third_party/nlohmann/include)
+include_directories(${CMAKE_SOURCE_DIR}/third_party/nlohmann/include)
 
 # Duoplot
 # include_directories(${CMAKE_SOURCE_DIR}/third_party/dvs/src/interfaces/cpp)
@@ -45,6 +45,11 @@ add_compile_options(-Wall -Wextra -pedantic)
 
 # Enable testing
 enable_testing()
+
+# Add modules
+add_subdirectory(src/modules/tcp_server)
+add_subdirectory(src/modules/tcp_client)
+add_subdirectory(src/modules/settings_handler)
 
 add_subdirectory(src/applications/simple)
 add_subdirectory(src/applications/repl)

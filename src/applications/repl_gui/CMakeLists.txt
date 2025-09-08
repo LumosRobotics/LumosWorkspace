@@ -7,7 +7,6 @@ endif()
 
 set(CPP_SOURCE_FILES 
     main.cpp 
-    tcp_server.cpp
 )
 
 add_executable(repl_gui ${CPP_SOURCE_FILES})
@@ -20,6 +19,8 @@ set_target_properties(repl_gui PROPERTIES
 target_link_libraries(repl_gui PRIVATE
     Qt6::Core
     Qt6::Widgets
+    tcp_server
+    settings_handler
 )
 
 # Link Python library and required system libraries

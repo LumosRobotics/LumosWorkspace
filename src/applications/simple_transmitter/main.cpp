@@ -1,69 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <cstring>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-
-bool sendMessage(const std::string& host, int port, const std::string& header, const std::string& payload) {
-    int client_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_socket < 0) {
-        std::cerr << "Failed to create socket" << std::endl;
-        return false;
-    }
-    
-    struct sockaddr_in server_addr;
-    std::memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    
-    if (inet_pton(AF_INET, host.c_str(), &server_addr.sin_addr) <= 0) {
-        std::cerr << "Invalid address" << std::endl;
-        close(client_socket);
-        return false;
-    }
-    
-    if (connect(client_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "Connection failed" << std::endl;
-        close(client_socket);
-        return false;
-    }
-    
-    // Send header size (network byte order)
-    uint32_t header_size = htonl(header.size());
-    if (send(client_socket, &header_size, sizeof(header_size), 0) < 0) {
-        std::cerr << "Failed to send header size" << std::endl;
-        close(client_socket);
-        return false;
-    }
-    
-    // Send header
-    if (send(client_socket, header.c_str(), header.size(), 0) < 0) {
-        std::cerr << "Failed to send header" << std::endl;
-        close(client_socket);
-        return false;
-    }
-    
-    // Send payload size (network byte order)
-    uint32_t payload_size = htonl(payload.size());
-    if (send(client_socket, &payload_size, sizeof(payload_size), 0) < 0) {
-        std::cerr << "Failed to send payload size" << std::endl;
-        close(client_socket);
-        return false;
-    }
-    
-    // Send payload
-    if (send(client_socket, payload.c_str(), payload.size(), 0) < 0) {
-        std::cerr << "Failed to send payload" << std::endl;
-        close(client_socket);
-        return false;
-    }
-    
-    close(client_socket);
-    return true;
-}
+#include "../../modules/tcp_client/tcp_client.h"
 
 int main(int argc, char* argv[]) {
     std::string host = "127.0.0.1";
@@ -76,11 +14,17 @@ int main(int argc, char* argv[]) {
         port = std::atoi(argv[2]);
     }
     
-    std::cout << "Simple TCP Transmitter" << std::endl;
+    // Create TCP client
+    TCPClient client(host, port);
+    
+    std::cout << "Simple TCP Transmitter (using tcp_client module)" << std::endl;
     std::cout << "Target: " << host << ":" << port << std::endl;
     std::cout << "Commands:" << std::endl;
     std::cout << "  list [name] - Send a list of integers (optional name)" << std::endl;
     std::cout << "  string [name] <value> - Send a string value (optional name)" << std::endl;
+    std::cout << "  connect - Connect to server" << std::endl;
+    std::cout << "  disconnect - Disconnect from server" << std::endl;
+    std::cout << "  status - Show connection status" << std::endl;
     std::cout << "  quit - Exit" << std::endl;
     std::cout << std::endl;
     
@@ -93,22 +37,37 @@ int main(int argc, char* argv[]) {
             break;
         }
         
-        if (command.substr(0, 4) == "list") {
-            std::string header;
-            if (command.size() > 5) {
-                // Name provided
-                std::string name = command.substr(5);
-                header = "{\"type\": \"int_list\", \"name\": \"" + name + "\"}";
+        if (command == "connect") {
+            if (client.connect()) {
+                std::cout << "Connected to " << host << ":" << port << std::endl;
             } else {
-                // No name provided - let receiver generate random name
-                header = "{\"type\": \"int_list\"}";
+                std::cout << "Failed to connect to " << host << ":" << port << std::endl;
+            }
+        }
+        else if (command == "disconnect") {
+            client.disconnect();
+            std::cout << "Disconnected" << std::endl;
+        }
+        else if (command == "status") {
+            std::cout << "Connection status: " << (client.isConnected() ? "Connected" : "Disconnected") << std::endl;
+            std::cout << "Target: " << client.getHost() << ":" << client.getPort() << std::endl;
+        }
+        else if (command.substr(0, 4) == "list") {
+            if (!client.isConnected()) {
+                std::cout << "Not connected. Use 'connect' command first." << std::endl;
+                continue;
             }
             
-            std::string payload = "[1, 2, 3, 4, 5, 42, 100]";
+            std::vector<int> data = {1, 2, 3, 4, 5, 42, 100};
+            std::string name;
             
-            if (sendMessage(host, port, header, payload)) {
-                if (command.size() > 5) {
-                    std::cout << "Sent integer list with name '" << command.substr(5) << "'" << std::endl;
+            if (command.size() > 5) {
+                name = command.substr(5);
+            }
+            
+            if (client.sendIntList(data, name)) {
+                if (!name.empty()) {
+                    std::cout << "Sent integer list with name '" << name << "'" << std::endl;
                 } else {
                     std::cout << "Sent integer list (random name will be assigned)" << std::endl;
                 }
@@ -117,8 +76,13 @@ int main(int argc, char* argv[]) {
             }
         }
         else if (command.substr(0, 6) == "string") {
-            std::string header;
-            std::string payload;
+            if (!client.isConnected()) {
+                std::cout << "Not connected. Use 'connect' command first." << std::endl;
+                continue;
+            }
+            
+            std::string name;
+            std::string value = "hello world";  // default value
             
             if (command.size() > 7) {
                 std::string rest = command.substr(7);
@@ -126,31 +90,33 @@ int main(int argc, char* argv[]) {
                 
                 if (space_pos != std::string::npos) {
                     // Both name and value provided
-                    std::string name = rest.substr(0, space_pos);
-                    std::string value = rest.substr(space_pos + 1);
-                    header = "{\"type\": \"string\", \"name\": \"" + name + "\"}";
-                    payload = "\"" + value + "\"";
+                    name = rest.substr(0, space_pos);
+                    value = rest.substr(space_pos + 1);
                 } else {
-                    // Only value provided, no name
-                    std::string value = rest;
-                    header = "{\"type\": \"string\"}";
-                    payload = "\"" + value + "\"";
+                    // Only value provided (no name)
+                    value = rest;
                 }
-            } else {
-                // No name or value provided
-                header = "{\"type\": \"string\"}";
-                payload = "\"hello world\"";
             }
             
-            if (sendMessage(host, port, header, payload)) {
-                std::cout << "Sent string successfully" << std::endl;
+            if (client.sendString(value, name)) {
+                std::cout << "Sent string";
+                if (!name.empty()) {
+                    std::cout << " with name '" << name << "'";
+                }
+                std::cout << ": \"" << value << "\"" << std::endl;
             } else {
                 std::cout << "Failed to send message" << std::endl;
             }
         }
         else {
-            std::cout << "Unknown command. Use 'list', 'string', or 'quit'" << std::endl;
+            std::cout << "Unknown command. Available commands:" << std::endl;
+            std::cout << "  connect, disconnect, status, list [name], string [name] <value>, quit" << std::endl;
         }
+    }
+    
+    // Cleanup - disconnect if still connected
+    if (client.isConnected()) {
+        client.disconnect();
     }
     
     return 0;
