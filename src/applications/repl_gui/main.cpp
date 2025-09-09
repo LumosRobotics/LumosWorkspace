@@ -275,6 +275,7 @@ private slots:
     void updateVariables();
     void showSettingsDialog();
     void switchLayoutMode(LayoutMode mode, bool forceApply = false);
+    void applyColors();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -292,7 +293,7 @@ public:
 
 private:
     QTextEdit *outputArea;
-    QLineEdit *inputLine;
+    QTextEdit *inputArea; // Changed from QLineEdit to QTextEdit for multi-line support
     QListWidget *variablesList;
     QTimer *updateTimer;
     TCPServer *tcpServer;
@@ -302,6 +303,12 @@ private:
     LayoutMode currentLayoutMode;
     QWidget *replWidget;
     QVBoxLayout *replLayout;
+    
+    // Customizable colors
+    QString backgroundColor;
+    QString textColor;
+    QString borderColor;
+    bool colorsModifiedInSession;
 #ifdef ENABLE_DEBUG_PORT
     std::unique_ptr<DebugTcpServer> debugServer;
 #endif
@@ -468,18 +475,24 @@ void PythonREPLWidget::setupUI()
         "}");
     replLayout->addWidget(outputArea);
 
-    inputLine = new QLineEdit();
-    inputLine->setFont(QFont(customFontFamily.isEmpty() ? "Monaco" : customFontFamily, 12));
-    inputLine->setStyleSheet(
-        "QLineEdit {"
+    inputArea = new QTextEdit();
+    inputArea->setFont(QFont(customFontFamily.isEmpty() ? "Monaco" : customFontFamily, 12));
+    inputArea->setMaximumHeight(100); // Limit height to prevent it from taking too much space
+    inputArea->setMinimumHeight(30);  // Set minimum height
+    inputArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    inputArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    inputArea->setLineWrapMode(QTextEdit::WidgetWidth);
+    inputArea->setStyleSheet(
+        "QTextEdit {"
         "    background-color: #202A34;"
         "    color: #CCCCCC;" // Light gray text
         "    border: 1px solid #555555;"
         "    border-radius: 6px;"
         "    padding: 6px 10px;"
         "}");
-    connect(inputLine, &QLineEdit::returnPressed, this, &PythonREPLWidget::executeCommand);
-    replLayout->addWidget(inputLine);
+    // Install event filter to handle Enter vs Shift+Enter
+    inputArea->installEventFilter(this);
+    replLayout->addWidget(inputArea);
 
     // Right side - Variables
     QWidget *variablesWidget = new QWidget();
@@ -535,8 +548,9 @@ void PythonREPLWidget::setupUI()
 
     outputArea->append(">>> ");
     
-    // Apply the loaded layout mode
+    // Apply the loaded layout mode and colors
     switchLayoutMode(currentLayoutMode, true);
+    applyColors();
 }
 
 void PythonREPLWidget::showSettingsDialog()
@@ -547,17 +561,17 @@ void PythonREPLWidget::showSettingsDialog()
     settingsDialog->setFixedSize(300, 150);
     
     // Apply dark theme to dialog
-    settingsDialog->setStyleSheet(
+    settingsDialog->setStyleSheet(QString(
         "QDialog {"
-        "    background-color: #202A34;"
-        "    color: #CCCCCC;"
+        "    background-color: %1;"
+        "    color: %2;"
         "}"
         "QLabel {"
-        "    color: #CCCCCC;"
+        "    color: %2;"
         "    font-size: 12px;"
         "}"
         "QRadioButton {"
-        "    color: #CCCCCC;"
+        "    color: %2;"
         "    font-size: 12px;"
         "    spacing: 8px;"
         "}"
@@ -566,7 +580,7 @@ void PythonREPLWidget::showSettingsDialog()
         "    height: 14px;"
         "}"
         "QRadioButton::indicator:unchecked {"
-        "    border: 2px solid #555555;"
+        "    border: 2px solid %4;"
         "    border-radius: 7px;"
         "    background-color: transparent;"
         "}"
@@ -576,20 +590,23 @@ void PythonREPLWidget::showSettingsDialog()
         "    background-color: #00AA00;"
         "}"
         "QPushButton {"
-        "    background-color: #444444;"
-        "    color: #CCCCCC;"
-        "    border: 1px solid #555555;"
+        "    background-color: %4;"
+        "    color: %2;"
+        "    border: 1px solid %3;"
         "    border-radius: 4px;"
         "    padding: 6px 12px;"
         "    font-size: 12px;"
         "}"
         "QPushButton:hover {"
-        "    background-color: #555555;"
+        "    background-color: %3;"
         "}"
         "QPushButton:pressed {"
-        "    background-color: #333333;"
-        "}"
-    );
+        "    background-color: %5;"
+        "}")
+        .arg(backgroundColor, textColor, 
+             QString("#%1").arg((borderColor.mid(1).toInt(nullptr, 16) + 0x222222) & 0xFFFFFF, 6, 16, QChar('0')), 
+             borderColor,
+             QString("#%1").arg((borderColor.mid(1).toInt(nullptr, 16) - 0x111111) & 0xFFFFFF, 6, 16, QChar('0'))));
     
     QVBoxLayout *layout = new QVBoxLayout(settingsDialog);
     layout->setSpacing(12);
@@ -663,8 +680,8 @@ void PythonREPLWidget::showSettingsDialog()
 
 void PythonREPLWidget::initializePython()
 {
-    // Set Python path environment variable
-    setenv("PYTHONPATH", "../third_party/cpython/Lib", 1);
+    // Set Python path environment variable to include site-packages and modules
+    setenv("PYTHONPATH", "../third_party/cpython/Lib:../third_party/cpython/Lib/site-packages:../third_party/cpython/Modules", 1);
     setenv("PYTHONHOME", "../third_party/cpython", 1);
 
     // Initialize Python interpreter
@@ -735,8 +752,8 @@ void PythonREPLWidget::loadFonts()
 
 void PythonREPLWidget::executeCommand()
 {
-    QString command = inputLine->text().trimmed();
-    inputLine->clear();
+    QString command = inputArea->toPlainText().trimmed();
+    inputArea->clear();
 
     if (command.isEmpty())
     {
@@ -1089,6 +1106,12 @@ void PythonREPLWidget::loadSettings()
     } else {
         currentLayoutMode = LayoutMode::BottomInput; // Default
     }
+    
+    // Load color settings with defaults
+    backgroundColor = QString::fromStdString(settingsHandler->getString("ui.background_color", "#202A34"));
+    textColor = QString::fromStdString(settingsHandler->getString("ui.text_color", "#CCCCCC"));
+    borderColor = QString::fromStdString(settingsHandler->getString("ui.border_color", "#555555"));
+    colorsModifiedInSession = false; // Colors haven't been modified yet
 }
 
 void PythonREPLWidget::saveSettings()
@@ -1124,6 +1147,13 @@ void PythonREPLWidget::saveSettings()
     // Save layout mode
     std::string layoutModeStr = (currentLayoutMode == LayoutMode::InlineInput) ? "inline_input" : "bottom_input";
     settingsHandler->setString("ui.layout_mode", layoutModeStr);
+    
+    // Save color settings only if they were modified in this session
+    if (colorsModifiedInSession) {
+        settingsHandler->setString("ui.background_color", backgroundColor.toStdString());
+        settingsHandler->setString("ui.text_color", textColor.toStdString());
+        settingsHandler->setString("ui.border_color", borderColor.toStdString());
+    }
 
     // Force save to file
     settingsHandler->saveSettings();
@@ -1139,13 +1169,13 @@ void PythonREPLWidget::switchLayoutMode(LayoutMode mode, bool forceApply)
     
     if (mode == LayoutMode::BottomInput) {
         // Switch to bottom input mode
-        inputLine->setVisible(true);
+        inputArea->setVisible(true);
         outputArea->setReadOnly(true);
         outputArea->removeEventFilter(this); // Remove event filter for inline mode
-        inputLine->setFocus();
+        inputArea->setFocus();
     } else {
         // Switch to inline input mode
-        inputLine->setVisible(false);
+        inputArea->setVisible(false);
         outputArea->setReadOnly(false);
         outputArea->setFocus();
         
@@ -1164,13 +1194,34 @@ void PythonREPLWidget::switchLayoutMode(LayoutMode mode, bool forceApply)
 
 bool PythonREPLWidget::eventFilter(QObject *obj, QEvent *event)
 {
-    if (obj == outputArea && currentLayoutMode == LayoutMode::InlineInput) {
-        if (event->type() == QEvent::KeyPress) {
-            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+    if (event->type() == QEvent::KeyPress) {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        
+        // Handle input area events (bottom input mode)
+        if (obj == inputArea && currentLayoutMode == LayoutMode::BottomInput) {
             if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
-                // Handle Enter key in inline mode
-                executeInlineCommand();
-                return true; // Event handled
+                if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                    // Shift+Enter: Insert newline (let default behavior handle it)
+                    return false;
+                } else {
+                    // Plain Enter: Execute command
+                    executeCommand();
+                    return true; // Event handled
+                }
+            }
+        }
+        
+        // Handle output area events (inline input mode)
+        else if (obj == outputArea && currentLayoutMode == LayoutMode::InlineInput) {
+            if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+                if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                    // Shift+Enter: Insert newline in inline mode
+                    return false;
+                } else {
+                    // Plain Enter: Execute inline command
+                    executeInlineCommand();
+                    return true; // Event handled
+                }
             }
         }
     }
@@ -1233,6 +1284,149 @@ void PythonREPLWidget::executeInlineCommand()
     outputArea->setTextCursor(cursor);
 }
 
+void PythonREPLWidget::applyColors()
+{
+    // Calculate derived colors from border color for better visual hierarchy
+    QString lighterBorderColor = "#" + QString::number((borderColor.mid(1).toInt(nullptr, 16) + 0x222222) & 0xFFFFFF, 16).toUpper().rightJustified(6, '0');
+    QString darkerBorderColor = "#" + QString::number((borderColor.mid(1).toInt(nullptr, 16) - 0x111111) & 0xFFFFFF, 16).toUpper().rightJustified(6, '0');
+    
+    // Apply colors to main window and ensure it covers everything
+    setStyleSheet(QString("QMainWindow { background-color: %1; border: none; } QWidget { background-color: %1; }").arg(backgroundColor));
+    
+    // Apply colors to title bar if it exists
+    if (titleBar) {
+        titleBar->setStyleSheet(QString("background-color: %1; border: none;").arg(backgroundColor));
+    }
+    
+    // Apply colors to menu bar
+    if (auto menuBar = this->menuBar()) {
+        menuBar->setStyleSheet(QString(
+            "QMenuBar {"
+            "    background-color: %1;"
+            "    color: %2;"
+            "    border: none;"
+            "    padding: 2px;"
+            "}"
+            "QMenuBar::item {"
+            "    padding: 4px 8px;"
+            "    background: transparent;"
+            "}"
+            "QMenuBar::item:selected {"
+            "    background-color: %3;"
+            "}"
+            "QMenu {"
+            "    background-color: %1;"
+            "    color: %2;"
+            "    border: 1px solid %4;"
+            "}"
+            "QMenu::item {"
+            "    padding: 4px 16px;"
+            "}"
+            "QMenu::item:selected {"
+            "    background-color: %3;"
+            "}"
+        ).arg(backgroundColor, textColor, lighterBorderColor, borderColor));
+    }
+    
+    // Apply colors to central widget
+    if (auto centralWidget = this->centralWidget()) {
+        centralWidget->setStyleSheet(QString("background-color: %1; border: none;").arg(backgroundColor));
+    }
+    
+    // Apply colors to all child widgets to ensure complete coverage
+    for (auto widget : findChildren<QWidget*>()) {
+        // Skip widgets that should keep their specific styling
+        if (widget == outputArea || widget == inputArea || widget == variablesList) {
+            continue;
+        }
+        // Apply background color to container widgets
+        if (widget->children().size() > 0) { // Only apply to container widgets
+            widget->setStyleSheet(QString("QWidget { background-color: %1; }").arg(backgroundColor));
+        }
+    }
+    
+    // Apply colors to REPL widget
+    if (replWidget) {
+        replWidget->setStyleSheet(QString("background-color: %1;").arg(backgroundColor));
+    }
+    
+    // Apply colors to output area
+    if (outputArea) {
+        outputArea->setStyleSheet(QString(
+            "QTextEdit {"
+            "    background-color: %1;"
+            "    color: %2;"
+            "    border: none;"
+            "    selection-background-color: %3;"
+            "}"
+        ).arg(backgroundColor, textColor, lighterBorderColor));
+    }
+    
+    // Apply colors to input area
+    if (inputArea) {
+        inputArea->setStyleSheet(QString(
+            "QTextEdit {"
+            "    background-color: %1;"
+            "    color: %2;"
+            "    border: 1px solid %3;"
+            "    border-radius: 6px;"
+            "    padding: 6px 10px;"
+            "}"
+        ).arg(backgroundColor, textColor, borderColor));
+    }
+    
+    // Apply colors to variables panel - find by looking for QListWidget parent
+    for (auto widget : findChildren<QWidget*>()) {
+        if (widget->findChild<QListWidget*>() == variablesList && widget != this) {
+            widget->setStyleSheet(QString("QWidget { background-color: %1; }").arg(backgroundColor));
+            break;
+        }
+    }
+    
+    // Apply colors to all labels (including variables label)
+    for (auto label : findChildren<QLabel*>()) {
+        label->setStyleSheet(QString("QLabel { color: %1; background-color: %2; }").arg(textColor, backgroundColor));
+    }
+    
+    // Apply colors to separator lines
+    for (auto frame : findChildren<QFrame*>()) {
+        if (frame->frameShape() == QFrame::HLine || frame->frameShape() == QFrame::VLine) {
+            frame->setStyleSheet(QString("QFrame { color: %1; background-color: %1; }").arg(borderColor));
+        }
+    }
+    
+    // Apply colors to variables list
+    if (variablesList) {
+        variablesList->setStyleSheet(QString(
+            "QListWidget {"
+            "    background-color: %1;"
+            "    color: %2;"
+            "    border: none;"
+            "    selection-background-color: %3;"
+            "}"
+            "QListWidget::item {"
+            "    padding: 2px;"
+            "}"
+            "QListWidget::item:selected {"
+            "    background-color: %3;"
+            "}"
+        ).arg(backgroundColor, textColor, lighterBorderColor));
+    }
+    
+    // Apply colors to splitter
+    if (auto splitter = findChild<QSplitter*>()) {
+        splitter->setStyleSheet(QString(
+            "QSplitter {"
+            "    background-color: %1;"
+            "}"
+            "QSplitter::handle {"
+            "    background-color: %2;"
+            "    width: 1px;"
+            "}"
+        ).arg(backgroundColor, borderColor));
+    }
+}
+
 #ifdef ENABLE_DEBUG_PORT
 // Debug API methods for testing
 std::string PythonREPLWidget::executeCodeForTesting(const std::string &code)
@@ -1242,7 +1436,7 @@ std::string PythonREPLWidget::executeCodeForTesting(const std::string &code)
     QString qcode = QString::fromStdString(code);
 
     // Set the input text
-    inputLine->setText(qcode);
+    inputArea->setPlainText(qcode);
 
     // Trigger execution
     executeCommand();
@@ -1278,12 +1472,12 @@ void PythonREPLWidget::clearOutputForTesting()
 
 std::string PythonREPLWidget::getInputTextForTesting() const
 {
-    return inputLine->text().toStdString();
+    return inputArea->toPlainText().toStdString();
 }
 
 void PythonREPLWidget::setInputTextForTesting(const std::string &text)
 {
-    inputLine->setText(QString::fromStdString(text));
+    inputArea->setPlainText(QString::fromStdString(text));
 }
 
 // Debug TCP Server processCommand implementation

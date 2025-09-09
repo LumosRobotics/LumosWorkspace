@@ -229,8 +229,8 @@ std::string evaluatePythonExpression(const std::string& expression) {
 
 int main()
 {
-    // Set Python path environment variable
-    setenv("PYTHONPATH", "../third_party/cpython/Lib", 1);
+    // Set Python path environment variable to include site-packages and modules
+    setenv("PYTHONPATH", "../third_party/cpython/Lib:../third_party/cpython/Lib/site-packages:../third_party/cpython/Modules", 1);
     setenv("PYTHONHOME", "../third_party/cpython", 1);
     
     // Initialize Python interpreter
