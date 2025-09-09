@@ -274,7 +274,7 @@ private slots:
     void executeInlineCommand();
     void updateVariables();
     void showSettingsDialog();
-    void switchLayoutMode(LayoutMode mode);
+    void switchLayoutMode(LayoutMode mode, bool forceApply = false);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -536,7 +536,7 @@ void PythonREPLWidget::setupUI()
     outputArea->append(">>> ");
     
     // Apply the loaded layout mode
-    switchLayoutMode(currentLayoutMode);
+    switchLayoutMode(currentLayoutMode, true);
 }
 
 void PythonREPLWidget::showSettingsDialog()
@@ -1129,9 +1129,9 @@ void PythonREPLWidget::saveSettings()
     settingsHandler->saveSettings();
 }
 
-void PythonREPLWidget::switchLayoutMode(LayoutMode mode)
+void PythonREPLWidget::switchLayoutMode(LayoutMode mode, bool forceApply)
 {
-    if (currentLayoutMode == mode) {
+    if (currentLayoutMode == mode && !forceApply) {
         return; // Already in the requested mode
     }
     
@@ -1141,7 +1141,7 @@ void PythonREPLWidget::switchLayoutMode(LayoutMode mode)
         // Switch to bottom input mode
         inputLine->setVisible(true);
         outputArea->setReadOnly(true);
-        outputArea->disconnect(); // Remove any custom key event handlers
+        outputArea->removeEventFilter(this); // Remove event filter for inline mode
         inputLine->setFocus();
     } else {
         // Switch to inline input mode
