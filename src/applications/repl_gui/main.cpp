@@ -16,6 +16,12 @@
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QFrame>
+#include <QMenuBar>
+#include <QDialog>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QAction>
+#include <QLabel>
 #include "../../modules/tcp_server/tcp_server.h"
 #include "../../modules/settings_handler/settings_handler.h"
 #ifdef ENABLE_DEBUG_PORT
@@ -27,6 +33,7 @@
 #include <sstream>
 #include <memory>
 #include <signal.h>
+#include <iostream>
 
 QString loadCustomFont(const QString &fontPath)
 {
@@ -259,6 +266,7 @@ public:
 private slots:
     void executeCommand();
     void updateVariables();
+    void showSettingsDialog();
 
 #ifdef ENABLE_DEBUG_PORT
 public:
@@ -367,15 +375,55 @@ void PythonREPLWidget::setupUI()
     // Set main window background
     setStyleSheet("QMainWindow { background-color: #202A34; border: none; }");
 
+    // Create menu bar
+    QMenuBar *menuBar = new QMenuBar(this);
+    menuBar->setStyleSheet(
+        "QMenuBar {"
+        "    background-color: #202A34;"
+        "    color: #CCCCCC;"
+        "    border: none;"
+        "    padding: 2px;"
+        "}"
+        "QMenuBar::item {"
+        "    background-color: transparent;"
+        "    padding: 4px 8px;"
+        "}"
+        "QMenuBar::item:selected {"
+        "    background-color: #444444;"
+        "}"
+        "QMenu {"
+        "    background-color: #202A34;"
+        "    color: #CCCCCC;"
+        "    border: 1px solid #555555;"
+        "}"
+        "QMenu::item {"
+        "    padding: 6px 20px;"
+        "    border: none;"
+        "}"
+        "QMenu::item:selected {"
+        "    background-color: #444444;"
+        "}"
+    );
+    
+    // Create the repl_gui menu
+    QMenu *replGuiMenu = menuBar->addMenu("repl_gui");
+    
+    // Add Settings action
+    QAction *settingsAction = replGuiMenu->addAction("Settings...");
+    connect(settingsAction, &QAction::triggered, this, &PythonREPLWidget::showSettingsDialog);
+
     // Create main container widget
     QWidget *mainWidget = new QWidget(this);
     mainWidget->setStyleSheet("background-color: #202A34; border: none;");
     setCentralWidget(mainWidget);
 
-    // Create main vertical layout for title bar + content
+    // Create main vertical layout for menu bar + title bar + content
     QVBoxLayout *mainVerticalLayout = new QVBoxLayout(mainWidget);
     mainVerticalLayout->setContentsMargins(0, 0, 0, 0);
     mainVerticalLayout->setSpacing(0);
+
+    // Add menu bar
+    mainVerticalLayout->addWidget(menuBar);
 
     // Add custom title bar
     titleBar = new CustomTitleBar(this);
@@ -472,6 +520,122 @@ void PythonREPLWidget::setupUI()
     mainLayout->addWidget(splitter);
 
     outputArea->append(">>> ");
+}
+
+void PythonREPLWidget::showSettingsDialog()
+{
+    QDialog *settingsDialog = new QDialog(this);
+    settingsDialog->setWindowTitle("Settings");
+    settingsDialog->setModal(true);
+    settingsDialog->setFixedSize(300, 150);
+    
+    // Apply dark theme to dialog
+    settingsDialog->setStyleSheet(
+        "QDialog {"
+        "    background-color: #202A34;"
+        "    color: #CCCCCC;"
+        "}"
+        "QLabel {"
+        "    color: #CCCCCC;"
+        "    font-size: 12px;"
+        "}"
+        "QRadioButton {"
+        "    color: #CCCCCC;"
+        "    font-size: 12px;"
+        "    spacing: 8px;"
+        "}"
+        "QRadioButton::indicator {"
+        "    width: 14px;"
+        "    height: 14px;"
+        "}"
+        "QRadioButton::indicator:unchecked {"
+        "    border: 2px solid #555555;"
+        "    border-radius: 7px;"
+        "    background-color: transparent;"
+        "}"
+        "QRadioButton::indicator:checked {"
+        "    border: 2px solid #00AA00;"
+        "    border-radius: 7px;"
+        "    background-color: #00AA00;"
+        "}"
+        "QPushButton {"
+        "    background-color: #444444;"
+        "    color: #CCCCCC;"
+        "    border: 1px solid #555555;"
+        "    border-radius: 4px;"
+        "    padding: 6px 12px;"
+        "    font-size: 12px;"
+        "}"
+        "QPushButton:hover {"
+        "    background-color: #555555;"
+        "}"
+        "QPushButton:pressed {"
+        "    background-color: #333333;"
+        "}"
+    );
+    
+    QVBoxLayout *layout = new QVBoxLayout(settingsDialog);
+    layout->setSpacing(12);
+    layout->setContentsMargins(20, 20, 20, 20);
+    
+    // Add title label
+    QLabel *titleLabel = new QLabel("Input Position:");
+    titleLabel->setStyleSheet("font-weight: bold; font-size: 14px;");
+    layout->addWidget(titleLabel);
+    
+    // Create radio buttons
+    QRadioButton *bottomInputRadio = new QRadioButton("Bottom input");
+    QRadioButton *inlineInputRadio = new QRadioButton("Inline input");
+    
+    // Create button group to make them mutually exclusive
+    QButtonGroup *inputButtonGroup = new QButtonGroup(settingsDialog);
+    inputButtonGroup->addButton(bottomInputRadio);
+    inputButtonGroup->addButton(inlineInputRadio);
+    
+    // Set default selection (Bottom input)
+    bottomInputRadio->setChecked(true);
+    
+    layout->addWidget(bottomInputRadio);
+    layout->addWidget(inlineInputRadio);
+    
+    // Add some spacing
+    layout->addStretch();
+    
+    // Add OK and Cancel buttons
+    QHBoxLayout *buttonLayout = new QHBoxLayout();
+    QPushButton *okButton = new QPushButton("OK");
+    QPushButton *cancelButton = new QPushButton("Cancel");
+    
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(cancelButton);
+    buttonLayout->addWidget(okButton);
+    
+    layout->addLayout(buttonLayout);
+    
+    // Connect buttons
+    connect(okButton, &QPushButton::clicked, [settingsDialog]() {
+        settingsDialog->accept();
+    });
+    
+    connect(cancelButton, &QPushButton::clicked, [settingsDialog]() {
+        settingsDialog->reject();
+    });
+    
+    // Show dialog and handle result
+    int result = settingsDialog->exec();
+    
+    if (result == QDialog::Accepted) {
+        // Handle the settings change
+        if (bottomInputRadio->isChecked()) {
+            // Bottom input selected
+            std::cout << "User selected: Bottom input" << std::endl;
+        } else if (inlineInputRadio->isChecked()) {
+            // Inline input selected
+            std::cout << "User selected: Inline input" << std::endl;
+        }
+    }
+    
+    settingsDialog->deleteLater();
 }
 
 void PythonREPLWidget::initializePython()
