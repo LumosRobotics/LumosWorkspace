@@ -22,6 +22,7 @@
 #include <QButtonGroup>
 #include <QAction>
 #include <QLabel>
+#include <QKeyEvent>
 #include "../../modules/tcp_server/tcp_server.h"
 #include "../../modules/settings_handler/settings_handler.h"
 #ifdef ENABLE_DEBUG_PORT
@@ -34,6 +35,11 @@
 #include <memory>
 #include <signal.h>
 #include <iostream>
+
+enum class LayoutMode {
+    BottomInput,    // Traditional layout with input box at bottom
+    InlineInput     // Input appears inline at current prompt position
+};
 
 QString loadCustomFont(const QString &fontPath)
 {
@@ -265,8 +271,13 @@ public:
 
 private slots:
     void executeCommand();
+    void executeInlineCommand();
     void updateVariables();
     void showSettingsDialog();
+    void switchLayoutMode(LayoutMode mode);
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 #ifdef ENABLE_DEBUG_PORT
 public:
@@ -288,6 +299,9 @@ private:
     QString customFontFamily;
     CustomTitleBar *titleBar;
     std::unique_ptr<SettingsHandler> settingsHandler;
+    LayoutMode currentLayoutMode;
+    QWidget *replWidget;
+    QVBoxLayout *replLayout;
 #ifdef ENABLE_DEBUG_PORT
     std::unique_ptr<DebugTcpServer> debugServer;
 #endif
@@ -438,9 +452,9 @@ void PythonREPLWidget::setupUI()
     mainLayout->setContentsMargins(5, 0, 0, 0); // Small left margin, no other margins
 
     // Left side - REPL (output + input)
-    QWidget *replWidget = new QWidget();
+    replWidget = new QWidget();
     replWidget->setStyleSheet("background-color: #202A34;");
-    QVBoxLayout *replLayout = new QVBoxLayout(replWidget);
+    replLayout = new QVBoxLayout(replWidget);
 
     outputArea = new QTextEdit();
     outputArea->setReadOnly(true);
@@ -520,6 +534,9 @@ void PythonREPLWidget::setupUI()
     mainLayout->addWidget(splitter);
 
     outputArea->append(">>> ");
+    
+    // Apply the loaded layout mode
+    switchLayoutMode(currentLayoutMode);
 }
 
 void PythonREPLWidget::showSettingsDialog()
@@ -592,8 +609,12 @@ void PythonREPLWidget::showSettingsDialog()
     inputButtonGroup->addButton(bottomInputRadio);
     inputButtonGroup->addButton(inlineInputRadio);
     
-    // Set default selection (Bottom input)
-    bottomInputRadio->setChecked(true);
+    // Set current selection based on current layout mode
+    if (currentLayoutMode == LayoutMode::BottomInput) {
+        bottomInputRadio->setChecked(true);
+    } else {
+        inlineInputRadio->setChecked(true);
+    }
     
     layout->addWidget(bottomInputRadio);
     layout->addWidget(inlineInputRadio);
@@ -629,9 +650,11 @@ void PythonREPLWidget::showSettingsDialog()
         if (bottomInputRadio->isChecked()) {
             // Bottom input selected
             std::cout << "User selected: Bottom input" << std::endl;
+            switchLayoutMode(LayoutMode::BottomInput);
         } else if (inlineInputRadio->isChecked()) {
             // Inline input selected
             std::cout << "User selected: Inline input" << std::endl;
+            switchLayoutMode(LayoutMode::InlineInput);
         }
     }
     
@@ -1058,6 +1081,14 @@ void PythonREPLWidget::loadSettings()
     // Load splitter sizes
     std::vector<int> splitterSizes = settingsHandler->getSetting<std::vector<int>>("ui.splitter_sizes", std::vector<int>{600, 200});
     // Note: Splitter sizes will be applied in setupUI()
+    
+    // Load layout mode
+    std::string layoutModeStr = settingsHandler->getString("ui.layout_mode", "bottom_input");
+    if (layoutModeStr == "inline_input") {
+        currentLayoutMode = LayoutMode::InlineInput;
+    } else {
+        currentLayoutMode = LayoutMode::BottomInput; // Default
+    }
 }
 
 void PythonREPLWidget::saveSettings()
@@ -1089,9 +1120,117 @@ void PythonREPLWidget::saveSettings()
     // For now, just save default values
     std::vector<int> defaultSizes = {600, 200};
     settingsHandler->setSetting("ui.splitter_sizes", defaultSizes);
+    
+    // Save layout mode
+    std::string layoutModeStr = (currentLayoutMode == LayoutMode::InlineInput) ? "inline_input" : "bottom_input";
+    settingsHandler->setString("ui.layout_mode", layoutModeStr);
 
     // Force save to file
     settingsHandler->saveSettings();
+}
+
+void PythonREPLWidget::switchLayoutMode(LayoutMode mode)
+{
+    if (currentLayoutMode == mode) {
+        return; // Already in the requested mode
+    }
+    
+    currentLayoutMode = mode;
+    
+    if (mode == LayoutMode::BottomInput) {
+        // Switch to bottom input mode
+        inputLine->setVisible(true);
+        outputArea->setReadOnly(true);
+        outputArea->disconnect(); // Remove any custom key event handlers
+        inputLine->setFocus();
+    } else {
+        // Switch to inline input mode
+        inputLine->setVisible(false);
+        outputArea->setReadOnly(false);
+        outputArea->setFocus();
+        
+        // Position cursor at the end of the output
+        QTextCursor cursor = outputArea->textCursor();
+        cursor.movePosition(QTextCursor::End);
+        outputArea->setTextCursor(cursor);
+        
+        // Install event filter to handle Enter key
+        outputArea->installEventFilter(this);
+    }
+    
+    // Save the new layout mode
+    saveSettings();
+}
+
+bool PythonREPLWidget::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == outputArea && currentLayoutMode == LayoutMode::InlineInput) {
+        if (event->type() == QEvent::KeyPress) {
+            QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+            if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+                // Handle Enter key in inline mode
+                executeInlineCommand();
+                return true; // Event handled
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
+}
+
+void PythonREPLWidget::executeInlineCommand()
+{
+    // Get the current cursor position
+    QTextCursor cursor = outputArea->textCursor();
+    
+    // Select the current line to extract command
+    cursor.select(QTextCursor::LineUnderCursor);
+    QString fullLine = cursor.selectedText();
+    
+    // Extract command after the prompt (>>> )
+    QString command;
+    if (fullLine.startsWith(">>> ")) {
+        command = fullLine.mid(4).trimmed(); // Remove ">>> " prefix
+    } else {
+        command = fullLine.trimmed();
+    }
+    
+    // Move cursor to end of line
+    cursor.movePosition(QTextCursor::EndOfLine);
+    outputArea->setTextCursor(cursor);
+    
+    if (command.isEmpty()) {
+        outputArea->append(">>> ");
+        return;
+    }
+    
+    // If the line doesn't start with ">>> ", add it
+    if (!fullLine.startsWith(">>> ")) {
+        cursor.select(QTextCursor::LineUnderCursor);
+        cursor.insertText(QString(">>> %1").arg(command));
+    }
+    
+    // Move to end and add newline
+    cursor.movePosition(QTextCursor::End);
+    outputArea->setTextCursor(cursor);
+    outputArea->append("");
+    
+    if (command == "exit()" || command == "quit()") {
+        close();
+        return;
+    }
+    
+    std::string result = evaluatePythonExpression(command.toStdString());
+    
+    if (!result.empty()) {
+        outputArea->append(QString::fromStdString(result));
+    }
+    
+    outputArea->append(">>> ");
+    
+    // Position cursor at the end
+    cursor = outputArea->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    outputArea->setTextCursor(cursor);
 }
 
 #ifdef ENABLE_DEBUG_PORT
