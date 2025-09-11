@@ -246,10 +246,10 @@ bool DebugAPI::handleSpecialCommand(const QString& command) {
         lastSpecialCommandResult = "Variables cleared";
         return true;
     }
-    else if (cmd == "save vars" || cmd.startsWith("save vars ")) {
+    else if (cmd == "save" || cmd.startsWith("save ")) {
         QString customName = "";
-        if (cmd.startsWith("save vars ")) {
-            customName = cmd.mid(10).trimmed(); // Extract name after "save vars "
+        if (cmd.startsWith("save ")) {
+            customName = cmd.mid(5).trimmed(); // Extract name after "save "
         }
         lastSpecialCommandResult = saveVariablesToPickle(customName);
         return true;
@@ -299,21 +299,22 @@ QString DebugAPI::saveVariablesToPickle(const QString& customName) {
     
     QString fullPath = executablePath + "/" + filename;
     
-    // Create Python code to save variables to pickle
-    QString pythonCode = QString(R"(
-import pickle
-import os
-
-# Get all user variables (excluding built-ins)
+    // Execute save operation step by step to avoid compilation issues
+    pythonEngine->evaluateExpression("import pickle, os");
+    pythonEngine->evaluateExpression("globals_snapshot = dict(globals())");
+    
+    QString filterCode = QString(R"(
 user_vars = {}
-for name in dir():
-    if not name.startswith('__') and name not in ['pickle', 'os']:
+for name, value in globals_snapshot.items():
+    if not name.startswith('__') and name not in ['pickle', 'os', 'user_vars', 'globals_snapshot', 'name', 'value', 'f', 'saved_count', 'result_message']:
         try:
-            user_vars[name] = eval(name)
+            user_vars[name] = value
         except:
             pass
-
-# Save to pickle file
+)");
+    pythonEngine->evaluateExpression(filterCode.toStdString());
+    
+    QString saveCode = QString(R"(
 try:
     with open(r'%1', 'wb') as f:
         pickle.dump(user_vars, f)
@@ -321,12 +322,18 @@ try:
     result_message = f'Saved {saved_count} variables to %2'
 except Exception as e:
     result_message = f'Error saving variables: {str(e)}'
-    
-result_message
 )").arg(fullPath).arg(filename);
-
-    // Execute the Python code
-    std::string result = pythonEngine->evaluateExpression(pythonCode.toStdString());
+    
+    pythonEngine->evaluateExpression(saveCode.toStdString());
+    std::string result = pythonEngine->evaluateExpression("result_message");
+    
+    // Clean up variables that were created during save operation
+    pythonEngine->evaluateExpression(R"(
+try:
+    del pickle, os, user_vars, globals_snapshot, name, value, f, saved_count, result_message
+except:
+    pass
+)");
     
     if (result.empty()) {
         return QString("Variables saved to %1").arg(filename);
@@ -358,7 +365,7 @@ import os
 
 # Check if file exists
 if not os.path.exists(r'%1'):
-    print('Error: File not found: %2')
+    result_message = 'Error: File not found: %2'
 else:
     try:
         # Load variables from pickle file
@@ -369,20 +376,30 @@ else:
         loaded_count = 0
         if isinstance(loaded_vars, dict):
             for var_name, var_value in loaded_vars.items():
-                if not var_name.startswith('__') and var_name not in ['pickle', 'os', 'loaded_vars', 'loaded_count', 'var_name', 'var_value']:
+                if not var_name.startswith('__'):
                     globals()[var_name] = var_value
                     loaded_count += 1
             
-            print(f'Loaded {loaded_count} variables from %2')
+            result_message = f'Loaded {loaded_count} variables from %2'
         else:
-            print('Error: Pickle file does not contain a dictionary')
+            result_message = 'Error: Pickle file does not contain a dictionary'
             
     except Exception as e:
-        print(f'Error loading variables: {str(e)}')
+        result_message = f'Error loading variables: {str(e)}'
+
+print(result_message)
 )").arg(fullPath).arg(actualFilename);
 
     // Execute the Python code
     std::string result = pythonEngine->evaluateExpression(pythonCode.toStdString());
+    
+    // Clean up variables that were created during load operation (but keep loaded user variables)
+    pythonEngine->evaluateExpression(R"(
+try:
+    del pickle, os, loaded_vars, loaded_count, var_name, var_value, result_message, f
+except:
+    pass
+)");
     
     if (result.empty()) {
         return QString("Variables loaded from %1").arg(actualFilename);
@@ -412,9 +429,9 @@ LumosWorkspace REPL - Help & Commands
   clear vars          - Clear all Python variables from memory
   
 💾 VARIABLE PERSISTENCE:
-  save vars [name]    - Save all variables to pickle file
-                       'save vars' → saved_variables_TIMESTAMP.pickle
-                       'save vars my_data' → my_data.pickle
+  save [name]         - Save all variables to pickle file
+                       'save' → saved_variables_TIMESTAMP.pickle
+                       'save my_data' → my_data.pickle
                        
   load filename       - Load variables from pickle file
                        'load my_data' → loads my_data.pickle
@@ -422,7 +439,7 @@ LumosWorkspace REPL - Help & Commands
   
 📝 EXAMPLES:
   >>> x = 42                    # Create variable
-  >>> save vars session1       # Save to session1.pickle
+  >>> save session1            # Save to session1.pickle
   >>> clear vars               # Clear all variables
   >>> load session1            # Restore variables
   >>> print(x)                 # Variable restored: 42
