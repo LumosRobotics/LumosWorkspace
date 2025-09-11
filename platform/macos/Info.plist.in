@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>@MACOSX_BUNDLE_EXECUTABLE_NAME@</string>
+    
+    <key>CFBundleIdentifier</key>
+    <string>@MACOSX_BUNDLE_GUI_IDENTIFIER@</string>
+    
+    <key>CFBundleName</key>
+    <string>@MACOSX_BUNDLE_BUNDLE_NAME@</string>
+    
+    <key>CFBundleDisplayName</key>
+    <string>@MACOSX_BUNDLE_BUNDLE_NAME@</string>
+    
+    <key>CFBundleVersion</key>
+    <string>@MACOSX_BUNDLE_BUNDLE_VERSION@</string>
+    
+    <key>CFBundleShortVersionString</key>
+    <string>@MACOSX_BUNDLE_SHORT_VERSION_STRING@</string>
+    
+    <key>CFBundleIconFile</key>
+    <string>@MACOSX_BUNDLE_ICON_FILE@</string>
+    
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    
+    <key>CFBundleSignature</key>
+    <string>LMWS</string>
+    
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2025 LumosWorkspace. All rights reserved.</string>
+    
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>py</string>
+                <string>pickle</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Python Script</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+    </array>
+    
+    <key>NSAppleEventsUsageDescription</key>
+    <string>LumosWorkspace needs access to Apple Events for Python integration.</string>
+    
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>LumosWorkspace needs access to save and load Python variable files.</string>
+    
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>LumosWorkspace needs access to save and load Python variable files.</string>
+</dict>
+</plist>

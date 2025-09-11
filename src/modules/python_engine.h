@@ -37,6 +37,7 @@ public:
 private:
     bool initialized;
     void setupPythonPath();
+    std::string getExecutablePath();
     std::string formatPythonError();
     std::string truncateString(const std::string& str, size_t maxLength = 30);
 };

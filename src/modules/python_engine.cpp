@@ -1,6 +1,11 @@
 #include "python_engine.h"
 #include <iostream>
 #include <sstream>
+#include <filesystem>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 PythonEngine::PythonEngine() : initialized(false) {}
 
@@ -36,9 +41,86 @@ void PythonEngine::finalize() {
 }
 
 void PythonEngine::setupPythonPath() {
-    // Set Python path environment variable to include site-packages and modules
-    setenv("PYTHONPATH", "../third_party/cpython/Lib:../third_party/cpython/Lib/site-packages:../third_party/cpython/Modules", 1);
-    setenv("PYTHONHOME", "../third_party/cpython", 1);
+    std::string executablePath = getExecutablePath();
+    std::string baseDir;
+    std::string pythonLib;
+    
+    // Check if we're running from an app bundle
+    if (executablePath.find(".app/Contents/MacOS/") != std::string::npos) {
+        // Extract path to the .app bundle directory
+        size_t appPos = executablePath.find(".app/Contents/MacOS/");
+        std::string appBundlePath = executablePath.substr(0, appPos + 4); // Include .app
+        
+        // First try to use bundled Python library within the app
+        std::string bundledPythonLib = appBundlePath + "/Contents/Resources/python_lib";
+        if (std::filesystem::exists(bundledPythonLib)) {
+            // Use bundled Python library
+            pythonLib = bundledPythonLib;
+            baseDir = appBundlePath + "/Contents/Resources";
+            
+            // Set up paths using bundled library
+            std::string pythonPath = pythonLib;
+            setenv("PYTHONPATH", pythonPath.c_str(), 1);
+            
+            // For PYTHONHOME, we need to simulate the structure Python expects
+            // Create a temporary structure or use the bundle path
+            setenv("PYTHONHOME", baseDir.c_str(), 1);
+            
+            return;
+        }
+        
+        // Fallback: search for original build directory structure
+        std::vector<std::string> searchPaths = {
+            appBundlePath + "/../../../third_party/cpython",  // From build/src/applications/repl_gui/app.app
+            appBundlePath + "/../../third_party/cpython",     // Alternative location
+            appBundlePath + "/../third_party/cpython",        // Another alternative
+        };
+        
+        bool foundPython = false;
+        for (const auto& searchPath : searchPaths) {
+            std::filesystem::path pythonLibPath = std::filesystem::path(searchPath) / "Lib";
+            if (std::filesystem::exists(pythonLibPath)) {
+                baseDir = searchPath;
+                foundPython = true;
+                break;
+            }
+        }
+        
+        if (!foundPython) {
+            // Final fallback
+            baseDir = "../third_party/cpython";
+        }
+    } else {
+        // Running from build directory, use relative paths
+        baseDir = "../third_party/cpython";
+    }
+    
+    // Construct Python paths for non-bundled case
+    pythonLib = baseDir + "/Lib";
+    std::string pythonSitePackages = baseDir + "/Lib/site-packages";  
+    std::string pythonModules = baseDir + "/Modules";
+    std::string pythonPath = pythonLib + ":" + pythonSitePackages + ":" + pythonModules;
+    
+    setenv("PYTHONPATH", pythonPath.c_str(), 1);
+    setenv("PYTHONHOME", baseDir.c_str(), 1);
+}
+
+std::string PythonEngine::getExecutablePath() {
+#ifdef __APPLE__
+    char path[1024];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        return std::string(path);
+    }
+#else
+    char path[1024];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len != -1) {
+        path[len] = '\0';
+        return std::string(path);
+    }
+#endif
+    return "";
 }
 
 std::string PythonEngine::evaluateExpression(const std::string& expression) {

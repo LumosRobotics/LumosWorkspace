@@ -37,7 +37,7 @@ private:
     QJsonObject getSystemInfo();
     QString formatPythonOutput(const QString& output);
     bool handleSpecialCommand(const QString& command);
-    QString saveVariablesToPickle(const QString& customName = "");
+    QString saveVariablesToPickle(const QString& customName = "", const QString& varName = "");
     QString loadVariablesFromPickle(const QString& filename);
     QString getHelpText() const;
     

@@ -40,7 +40,7 @@ private:
     void navigateHistory(int direction);
     bool handleSpecialCommand(const QString& command);
     void clearVariables();
-    QString saveVariablesToPickle(const QString& customName = "");
+    QString saveVariablesToPickle(const QString& customName = "", const QString& varName = "");
     QString loadVariablesFromPickle(const QString& filename);
     QString getHelpText() const;
     QString formatPrompt(const QString& command) const;

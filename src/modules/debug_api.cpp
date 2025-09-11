@@ -247,11 +247,34 @@ bool DebugAPI::handleSpecialCommand(const QString& command) {
         return true;
     }
     else if (cmd == "save" || cmd.startsWith("save ")) {
-        QString customName = "";
-        if (cmd.startsWith("save ")) {
-            customName = cmd.mid(5).trimmed(); // Extract name after "save "
+        // Parse save command arguments
+        QString args = cmd.startsWith("save ") ? cmd.mid(5).trimmed() : "";
+        QStringList parts = args.split(' ', Qt::SkipEmptyParts);
+        
+        QString varName = "";
+        QString fileName = "";
+        
+        if (parts.size() == 0) {
+            // "save" - save all variables with timestamp
+        } else if (parts.size() == 1) {
+            // Could be "save filename" or "save varname"
+            // Check if it's a valid variable name by checking if it exists
+            QString checkCode = QString("'%1' in globals()").arg(parts[0]);
+            std::string exists = pythonEngine->evaluateExpression(checkCode.toStdString());
+            if (exists == "True") {
+                // It's a variable name
+                varName = parts[0];
+            } else {
+                // It's a filename
+                fileName = parts[0];
+            }
+        } else if (parts.size() == 2) {
+            // "save varname filename"
+            varName = parts[0];
+            fileName = parts[1];
         }
-        lastSpecialCommandResult = saveVariablesToPickle(customName);
+        
+        lastSpecialCommandResult = saveVariablesToPickle(fileName, varName);
         return true;
     }
     else if (cmd == "load" || cmd.startsWith("load ")) {
@@ -275,7 +298,7 @@ bool DebugAPI::handleSpecialCommand(const QString& command) {
     return false;
 }
 
-QString DebugAPI::saveVariablesToPickle(const QString& customName) {
+QString DebugAPI::saveVariablesToPickle(const QString& customName, const QString& varName) {
     if (!pythonEngine || !pythonEngine->isInitialized()) {
         return "Error: Python engine not initialized";
     }
@@ -286,9 +309,13 @@ QString DebugAPI::saveVariablesToPickle(const QString& customName) {
     // Determine filename
     QString filename;
     if (customName.isEmpty()) {
-        // Use timestamp if no custom name provided
+        // Use timestamp with variable-specific prefix if saving single variable
         QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
-        filename = QString("saved_variables_%1.pickle").arg(timestamp);
+        if (varName.isEmpty()) {
+            filename = QString("saved_variables_%1.pickle").arg(timestamp);
+        } else {
+            filename = QString("saved_%1_%2.pickle").arg(varName).arg(timestamp);
+        }
     } else {
         // Use custom name, ensure .pickle extension
         filename = customName;
@@ -303,7 +330,10 @@ QString DebugAPI::saveVariablesToPickle(const QString& customName) {
     pythonEngine->evaluateExpression("import pickle, os");
     pythonEngine->evaluateExpression("globals_snapshot = dict(globals())");
     
-    QString filterCode = QString(R"(
+    QString filterCode;
+    if (varName.isEmpty()) {
+        // Save all user variables
+        filterCode = QString(R"(
 user_vars = {}
 for name, value in globals_snapshot.items():
     if not name.startswith('__') and name not in ['pickle', 'os', 'user_vars', 'globals_snapshot', 'name', 'value', 'f', 'saved_count', 'result_message']:
@@ -312,9 +342,22 @@ for name, value in globals_snapshot.items():
         except:
             pass
 )");
+    } else {
+        // Save only the specified variable
+        filterCode = QString(R"(
+user_vars = {}
+if '%1' in globals_snapshot:
+    try:
+        user_vars['%1'] = globals_snapshot['%1']
+    except:
+        pass
+)").arg(varName);
+    }
     pythonEngine->evaluateExpression(filterCode.toStdString());
     
-    QString saveCode = QString(R"(
+    QString saveCode;
+    if (varName.isEmpty()) {
+        saveCode = QString(R"(
 try:
     with open(r'%1', 'wb') as f:
         pickle.dump(user_vars, f)
@@ -323,6 +366,19 @@ try:
 except Exception as e:
     result_message = f'Error saving variables: {str(e)}'
 )").arg(fullPath).arg(filename);
+    } else {
+        saveCode = QString(R"(
+try:
+    with open(r'%1', 'wb') as f:
+        pickle.dump(user_vars, f)
+    if len(user_vars) > 0:
+        result_message = f'Saved variable "%3" to %2'
+    else:
+        result_message = f'Error: Variable "%3" not found'
+except Exception as e:
+    result_message = f'Error saving variable: {str(e)}'
+)").arg(fullPath).arg(filename).arg(varName);
+    }
     
     pythonEngine->evaluateExpression(saveCode.toStdString());
     std::string result = pythonEngine->evaluateExpression("result_message");
