@@ -7,3 +7,6 @@
 [submodule "third_party/nlohmann"]
 	path = third_party/nlohmann
 	url = git@github.com:nlohmann/json.git
+[submodule "third_party/ApplicationDeployment"]
+	path = third_party/ApplicationDeployment
+	url = git@github.com:LumosRobotics/ApplicationDeployment.git
