@@ -59,13 +59,13 @@ void MainWindow::createComponents() {
     titleBar = std::make_unique<CustomTitleBar>(this);
     
     // Main interface components
-    replInterface = std::make_unique<REPLInterface>(pythonEngine.get(), this);
+    replInterface = std::make_unique<REPLInterface>(pythonEngine.get(), settingsManager.get(), this);
     variablesPanel = std::make_unique<VariablesPanel>(pythonEngine.get(), this);
     layoutManager = std::make_unique<LayoutManager>(settingsManager.get(), this);
     
     // Network services
     tcpServer = std::make_unique<TCPServer>(pythonEngine.get(), this);
-    debugAPI = std::make_unique<DebugAPI>(pythonEngine.get(), this);
+    debugAPI = std::make_unique<DebugAPI>(pythonEngine.get(), settingsManager.get(), this);
     
     // Initialize Python engine
     if (!pythonEngine->initialize()) {

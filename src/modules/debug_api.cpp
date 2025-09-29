@@ -1,14 +1,17 @@
 #include "debug_api.h"
 #include "python_engine.h"
+#include "settings_manager.h"
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QHostAddress>
 #include <QDebug>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
 
-DebugAPI::DebugAPI(PythonEngine* pythonEngine, QObject* parent)
-    : QObject(parent), pythonEngine(pythonEngine) {
+DebugAPI::DebugAPI(PythonEngine* pythonEngine, SettingsManager* settingsManager, QObject* parent)
+    : QObject(parent), pythonEngine(pythonEngine), settingsManager(settingsManager) {
     
     debugServer = std::make_unique<QTcpServer>(this);
     
@@ -290,6 +293,10 @@ bool DebugAPI::handleSpecialCommand(const QString& command) {
         }
         return true;
     }
+    else if (cmd == "ls") {
+        lastSpecialCommandResult = listPickleFiles();
+        return true;
+    }
     else if (cmd == "help") {
         lastSpecialCommandResult = getHelpText();
         return true;
@@ -298,13 +305,66 @@ bool DebugAPI::handleSpecialCommand(const QString& command) {
     return false;
 }
 
+QString DebugAPI::getDefaultPickleDirectory() const
+{
+    // First priority: Check for custom data_dir in configuration
+    if (settingsManager && settingsManager->contains("data_dir")) {
+        QString customDir = settingsManager->getString("data_dir");
+        if (!customDir.isEmpty()) {
+            // Test if we can create/access this directory
+            QDir dir(customDir);
+            if (dir.exists() || dir.mkpath(customDir)) {
+                // Test write permissions by creating a temporary test file
+                QString testFile = customDir + "/.write_test";
+                QFile file(testFile);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.close();
+                    file.remove(); // Clean up test file
+                    return customDir;
+                }
+            }
+            // Custom directory failed, continue to fallbacks
+        }
+    }
+    
+    // Second priority: Try Documents directory (preferred location)
+    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (!documentsPath.isEmpty()) {
+        QString preferredDir = documentsPath + "/LumosWorkspace";
+        
+        // Test if we can create/access this directory
+        QDir dir(preferredDir);
+        if (dir.exists() || dir.mkpath(preferredDir)) {
+            // Test write permissions by creating a temporary test file
+            QString testFile = preferredDir + "/.write_test";
+            QFile file(testFile);
+            if (file.open(QIODevice::WriteOnly)) {
+                file.close();
+                file.remove(); // Clean up test file
+                return preferredDir;
+            }
+        }
+    }
+    
+    // Final fallback: /tmp/LumosWorkspace
+    return "/tmp/LumosWorkspace";
+}
+
 QString DebugAPI::saveVariablesToPickle(const QString& customName, const QString& varName) {
     if (!pythonEngine || !pythonEngine->isInitialized()) {
         return "Error: Python engine not initialized";
     }
 
-    // Get executable directory path
-    QString executablePath = QCoreApplication::applicationDirPath();
+    // Get default pickle directory
+    QString pickleDir = getDefaultPickleDirectory();
+    
+    // Ensure directory exists
+    QDir dir(pickleDir);
+    if (!dir.exists()) {
+        if (!dir.mkpath(pickleDir)) {
+            return QString("Error: Could not create directory %1").arg(pickleDir);
+        }
+    }
     
     // Determine filename
     QString filename;
@@ -324,7 +384,7 @@ QString DebugAPI::saveVariablesToPickle(const QString& customName, const QString
         }
     }
     
-    QString fullPath = executablePath + "/" + filename;
+    QString fullPath = pickleDir + "/" + filename;
     
     // Execute save operation step by step to avoid compilation issues
     pythonEngine->evaluateExpression("import pickle, os");
@@ -403,8 +463,8 @@ QString DebugAPI::loadVariablesFromPickle(const QString& filename) {
         return "Error: Python engine not initialized";
     }
 
-    // Get executable directory path
-    QString executablePath = QCoreApplication::applicationDirPath();
+    // Get default pickle directory
+    QString pickleDir = getDefaultPickleDirectory();
     
     // Determine full file path
     QString actualFilename = filename;
@@ -412,7 +472,7 @@ QString DebugAPI::loadVariablesFromPickle(const QString& filename) {
         actualFilename += ".pickle";
     }
     
-    QString fullPath = executablePath + "/" + actualFilename;
+    QString fullPath = pickleDir + "/" + actualFilename;
     
     // Create Python code to load variables from pickle
     QString pythonCode = QString(R"(
@@ -464,6 +524,47 @@ except:
     return QString::fromStdString(result);
 }
 
+QString DebugAPI::listPickleFiles() const
+{
+    QString pickleDir = getDefaultPickleDirectory();
+    
+    // Check if directory exists
+    QDir dir(pickleDir);
+    if (!dir.exists()) {
+        return QString("No data directory found at: %1").arg(pickleDir);
+    }
+    
+    // Get all .pickle files in the directory
+    QStringList nameFilters;
+    nameFilters << "*.pickle";
+    QFileInfoList fileList = dir.entryInfoList(nameFilters, QDir::Files, QDir::Time | QDir::Reversed);
+    
+    if (fileList.isEmpty()) {
+        return QString("No pickle files found in: %1").arg(pickleDir);
+    }
+    
+    // Format the file list
+    QString result = QString("Pickle files in %1:\n").arg(pickleDir);
+    for (const QFileInfo& fileInfo : fileList) {
+        QString fileName = fileInfo.fileName();
+        QString fileSize;
+        
+        qint64 size = fileInfo.size();
+        if (size < 1024) {
+            fileSize = QString("%1 B").arg(size);
+        } else if (size < 1024 * 1024) {
+            fileSize = QString("%.1f KB").arg(size / 1024.0);
+        } else {
+            fileSize = QString("%.1f MB").arg(size / (1024.0 * 1024.0));
+        }
+        
+        QString lastModified = fileInfo.lastModified().toString("yyyy-MM-dd hh:mm:ss");
+        result += QString("  %1 (%2, %3)\n").arg(fileName, fileSize, lastModified);
+    }
+    
+    return result.trimmed(); // Remove trailing newline
+}
+
 QString DebugAPI::getHelpText() const {
     return QString(R"(
 LumosWorkspace REPL - Help & Commands
@@ -492,6 +593,9 @@ LumosWorkspace REPL - Help & Commands
   load filename       - Load variables from pickle file
                        'load my_data' → loads my_data.pickle
                        'load data.pickle' → loads data.pickle
+                       
+  ls                  - List all pickle files in data directory
+                       Shows filename, size, and modification date
   
 📝 EXAMPLES:
   >>> x = 42                    # Create variable

@@ -1,13 +1,17 @@
 #include "repl_interface.h"
+#include "settings_manager.h"
 #include <QApplication>
 #include <QScrollBar>
 #include <QFont>
 #include <QDateTime>
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QDebug>
 
-REPLInterface::REPLInterface(PythonEngine *pythonEngine, QWidget *parent)
-    : QWidget(parent), pythonEngine(pythonEngine), currentLayoutMode("bottom_input"),
-      historyIndex(-1), executingCommand(false)
+REPLInterface::REPLInterface(PythonEngine *pythonEngine, SettingsManager *settingsManager, QWidget *parent)
+    : QWidget(parent), pythonEngine(pythonEngine), settingsManager(settingsManager), currentLayoutMode("bottom_input"),
+      historyIndex(-1), executingCommand(false), filePickerMode(false), selectedFileIndex(0)
 {
     setupUI();
     setupConnections();
@@ -62,16 +66,55 @@ void REPLInterface::setupEventFilters()
 
 bool REPLInterface::eventFilter(QObject *obj, QEvent *event)
 {
+    // Handle file picker mode with application-level event filter
+    if (filePickerMode && event->type() == QEvent::KeyPress)
+    {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        return handleKeyPress(keyEvent);
+    }
+    
+    // Handle normal input area events
     if (obj == inputArea && event->type() == QEvent::KeyPress)
     {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
         return handleKeyPress(keyEvent);
     }
+    
     return QWidget::eventFilter(obj, event);
 }
 
 bool REPLInterface::handleKeyPress(QKeyEvent *keyEvent)
 {
+    // Handle file picker mode
+    if (filePickerMode) {
+        qDebug() << "File picker mode - Key pressed:" << keyEvent->key();
+        
+        if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+            qDebug() << "Enter pressed - confirming selection";
+            confirmFileSelection();
+            return true;
+        }
+        else if (keyEvent->key() == Qt::Key_Up && keyEvent->modifiers() == Qt::NoModifier) {
+            qDebug() << "Up arrow pressed - moving up";
+            selectFile(-1); // Move up in file list
+            return true;
+        }
+        else if (keyEvent->key() == Qt::Key_Down && keyEvent->modifiers() == Qt::NoModifier) {
+            qDebug() << "Down arrow pressed - moving down";
+            selectFile(1); // Move down in file list
+            return true;
+        }
+        else if (keyEvent->key() == Qt::Key_Escape) {
+            qDebug() << "Escape pressed - canceling";
+            cancelFilePicker();
+            return true;
+        }
+        // In file picker mode, ignore all other keys
+        qDebug() << "Other key ignored in file picker mode";
+        return true;
+    }
+    
+    // Normal mode handling
     if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter)
     {
         if (keyEvent->modifiers() & Qt::ShiftModifier)
@@ -253,9 +296,8 @@ bool REPLInterface::handleSpecialCommand(const QString &command)
     {
         // Load variables from pickle file
         if (cmd == "load") {
-            QString error = "Error: Please specify a filename";
-            appendOutput(formatResult(error));
-            emit commandExecuted(command, error);
+            // Start interactive file picker
+            startFilePicker();
             return true;
         } else {
             QString filename = cmd.mid(5).trimmed(); // Extract filename after "load "
@@ -271,6 +313,14 @@ bool REPLInterface::handleSpecialCommand(const QString &command)
                 return true;
             }
         }
+    }
+    else if (cmd == "ls")
+    {
+        // List pickle files in current data directory
+        QString result = listPickleFiles();
+        appendOutput(formatResult(result));
+        emit commandExecuted(command, result);
+        return true;
     }
     else if (cmd == "help")
     {
@@ -301,6 +351,51 @@ void REPLInterface::clearVariables()
     }
 }
 
+QString REPLInterface::getDefaultPickleDirectory() const
+{
+    // First priority: Check for custom data_dir in configuration
+    if (settingsManager && settingsManager->contains("data_dir")) {
+        QString customDir = settingsManager->getString("data_dir");
+        if (!customDir.isEmpty()) {
+            // Test if we can create/access this directory
+            QDir dir(customDir);
+            if (dir.exists() || dir.mkpath(customDir)) {
+                // Test write permissions by creating a temporary test file
+                QString testFile = customDir + "/.write_test";
+                QFile file(testFile);
+                if (file.open(QIODevice::WriteOnly)) {
+                    file.close();
+                    file.remove(); // Clean up test file
+                    return customDir;
+                }
+            }
+            // Custom directory failed, continue to fallbacks
+        }
+    }
+    
+    // Second priority: Try Documents directory (preferred location)
+    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (!documentsPath.isEmpty()) {
+        QString preferredDir = documentsPath + "/LumosWorkspace";
+        
+        // Test if we can create/access this directory
+        QDir dir(preferredDir);
+        if (dir.exists() || dir.mkpath(preferredDir)) {
+            // Test write permissions by creating a temporary test file
+            QString testFile = preferredDir + "/.write_test";
+            QFile file(testFile);
+            if (file.open(QIODevice::WriteOnly)) {
+                file.close();
+                file.remove(); // Clean up test file
+                return preferredDir;
+            }
+        }
+    }
+    
+    // Final fallback: /tmp/LumosWorkspace
+    return "/tmp/LumosWorkspace";
+}
+
 QString REPLInterface::saveVariablesToPickle(const QString& customName, const QString& varName)
 {
     if (!pythonEngine || !pythonEngine->isInitialized())
@@ -308,8 +403,16 @@ QString REPLInterface::saveVariablesToPickle(const QString& customName, const QS
         return "Error: Python engine not initialized";
     }
 
-    // Get executable directory path
-    QString executablePath = QCoreApplication::applicationDirPath();
+    // Get default pickle directory
+    QString pickleDir = getDefaultPickleDirectory();
+    
+    // Ensure directory exists
+    QDir dir(pickleDir);
+    if (!dir.exists()) {
+        if (!dir.mkpath(pickleDir)) {
+            return QString("Error: Could not create directory %1").arg(pickleDir);
+        }
+    }
     
     // Determine filename
     QString filename;
@@ -329,7 +432,7 @@ QString REPLInterface::saveVariablesToPickle(const QString& customName, const QS
         }
     }
     
-    QString fullPath = executablePath + "/" + filename;
+    QString fullPath = pickleDir + "/" + filename;
     
     // Execute save operation step by step to avoid compilation issues
     pythonEngine->evaluateExpression("import pickle, os");
@@ -410,8 +513,8 @@ QString REPLInterface::loadVariablesFromPickle(const QString& filename)
         return "Error: Python engine not initialized";
     }
 
-    // Get executable directory path
-    QString executablePath = QCoreApplication::applicationDirPath();
+    // Get default pickle directory
+    QString pickleDir = getDefaultPickleDirectory();
     
     // Determine full file path
     QString actualFilename = filename;
@@ -419,7 +522,7 @@ QString REPLInterface::loadVariablesFromPickle(const QString& filename)
         actualFilename += ".pickle";
     }
     
-    QString fullPath = executablePath + "/" + actualFilename;
+    QString fullPath = pickleDir + "/" + actualFilename;
     
     // Create Python code to load variables from pickle
     QString pythonCode = QString(R"(
@@ -471,6 +574,184 @@ except:
     return QString::fromStdString(result);
 }
 
+QString REPLInterface::listPickleFiles() const
+{
+    QString pickleDir = getDefaultPickleDirectory();
+    
+    // Check if directory exists
+    QDir dir(pickleDir);
+    if (!dir.exists()) {
+        return QString("No data directory found at: %1").arg(pickleDir);
+    }
+    
+    // Get all .pickle files in the directory
+    QStringList nameFilters;
+    nameFilters << "*.pickle";
+    QFileInfoList fileList = dir.entryInfoList(nameFilters, QDir::Files, QDir::Time | QDir::Reversed);
+    
+    if (fileList.isEmpty()) {
+        return QString("No pickle files found in: %1").arg(pickleDir);
+    }
+    
+    // Format the file list
+    QString result = QString("Pickle files in %1:\n").arg(pickleDir);
+    for (const QFileInfo& fileInfo : fileList) {
+        QString fileName = fileInfo.fileName();
+        QString fileSize;
+        
+        qint64 size = fileInfo.size();
+        if (size < 1024) {
+            fileSize = QString("%1 B").arg(size);
+        } else if (size < 1024 * 1024) {
+            fileSize = QString("%.1f KB").arg(size / 1024.0);
+        } else {
+            fileSize = QString("%.1f MB").arg(size / (1024.0 * 1024.0));
+        }
+        
+        QString lastModified = fileInfo.lastModified().toString("yyyy-MM-dd hh:mm:ss");
+        result += QString("  %1 (%2, %3)\n").arg(fileName, fileSize, lastModified);
+    }
+    
+    return result.trimmed(); // Remove trailing newline
+}
+
+void REPLInterface::startFilePicker()
+{
+    QString pickleDir = getDefaultPickleDirectory();
+    QDir dir(pickleDir);
+    
+    if (!dir.exists()) {
+        QString error = QString("No data directory found at: %1").arg(pickleDir);
+        appendOutput(formatResult(error));
+        return;
+    }
+    
+    // Get all .pickle files
+    QStringList nameFilters;
+    nameFilters << "*.pickle";
+    QFileInfoList fileInfoList = dir.entryInfoList(nameFilters, QDir::Files, QDir::Time | QDir::Reversed);
+    
+    availableFiles.clear();
+    for (const QFileInfo& info : fileInfoList) {
+        availableFiles.append(info.fileName());
+    }
+    
+    if (availableFiles.isEmpty()) {
+        QString error = QString("No pickle files found in: %1").arg(pickleDir);
+        appendOutput(formatResult(error));
+        return;
+    }
+    
+    // Enter file picker mode
+    filePickerMode = true;
+    selectedFileIndex = 0;
+    
+    // Clear input area and make it read-only to prevent text entry
+    inputArea->clear();
+    inputArea->setReadOnly(true);
+    inputArea->setPlaceholderText("Use ↑↓ arrows to navigate, Enter to select, Esc to cancel");
+    
+    // Install event filter on the application to catch all key events
+    QApplication::instance()->installEventFilter(this);
+    
+    // Set focus to ensure we capture key events
+    inputArea->setFocus();
+    
+    // Display file picker
+    updateFilePickerDisplay();
+}
+
+void REPLInterface::updateFilePickerDisplay()
+{
+    if (!filePickerMode || availableFiles.isEmpty()) {
+        return;
+    }
+    
+    // Build the file picker display
+    QString display = "📂 Select a file to load (↑↓ to navigate, Enter to select, Esc to cancel):\n\n";
+    
+    for (int i = 0; i < availableFiles.size(); ++i) {
+        QString prefix = (i == selectedFileIndex) ? "► " : "  ";
+        display += QString("%1%2\n").arg(prefix, availableFiles[i]);
+    }
+    
+    // Update the output area
+    appendOutput(display);
+    
+    // Scroll to the bottom to show the picker
+    if (outputArea) {
+        QScrollBar* scrollBar = outputArea->verticalScrollBar();
+        scrollBar->setValue(scrollBar->maximum());
+    }
+}
+
+void REPLInterface::selectFile(int direction)
+{
+    if (!filePickerMode || availableFiles.isEmpty()) {
+        return;
+    }
+    
+    // Update selected index
+    selectedFileIndex += direction;
+    
+    // Wrap around
+    if (selectedFileIndex < 0) {
+        selectedFileIndex = availableFiles.size() - 1;
+    } else if (selectedFileIndex >= availableFiles.size()) {
+        selectedFileIndex = 0;
+    }
+    
+    // Clear the previous display and show updated one
+    // Remove the last file picker display from output
+    QString currentText = outputArea->toPlainText();
+    int lastPickerStart = currentText.lastIndexOf("📂 Select a file to load");
+    if (lastPickerStart != -1) {
+        outputArea->setPlainText(currentText.left(lastPickerStart));
+    }
+    
+    // Show updated picker
+    updateFilePickerDisplay();
+}
+
+void REPLInterface::confirmFileSelection()
+{
+    if (!filePickerMode || availableFiles.isEmpty() || selectedFileIndex < 0 || selectedFileIndex >= availableFiles.size()) {
+        return;
+    }
+    
+    QString selectedFile = availableFiles[selectedFileIndex];
+    
+    // Exit file picker mode
+    cancelFilePicker();
+    
+    // Load the selected file
+    QString result = loadVariablesFromPickle(selectedFile);
+    appendOutput(formatResult(result));
+    emit commandExecuted("load", result);
+}
+
+void REPLInterface::cancelFilePicker()
+{
+    if (!filePickerMode) {
+        return;
+    }
+    
+    // Exit file picker mode
+    filePickerMode = false;
+    availableFiles.clear();
+    selectedFileIndex = 0;
+    
+    // Remove application event filter
+    QApplication::instance()->removeEventFilter(this);
+    
+    // Restore input area to normal state
+    inputArea->setReadOnly(false);
+    inputArea->setPlaceholderText("");
+    
+    // Show prompt
+    appendOutput(">>> ");
+}
+
 QString REPLInterface::getHelpText() const
 {
     return QString(R"(
@@ -497,9 +778,12 @@ LumosWorkspace REPL - Help & Commands
                        'save' → saved_variables_TIMESTAMP.pickle
                        'save my_data' → my_data.pickle
                        
-  load filename       - Load variables from pickle file
-                       'load my_data' → loads my_data.pickle
-                       'load data.pickle' → loads data.pickle
+  load [filename]     - Load variables from pickle file
+                       'load' → interactive file picker with ↑↓ navigation
+                       'load my_data' → loads my_data.pickle directly
+                       
+  ls                  - List all pickle files in data directory
+                       Shows filename, size, and modification date
   
 📝 EXAMPLES:
   >>> x = 42                    # Create variable

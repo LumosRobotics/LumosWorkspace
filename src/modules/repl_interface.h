@@ -8,13 +8,16 @@
 #include <QLabel>
 #include <QStringList>
 #include <QKeyEvent>
+#include <QStandardPaths>
 #include "python_engine.h"
+
+class SettingsManager;
 
 class REPLInterface : public QWidget {
     Q_OBJECT
 
 public:
-    explicit REPLInterface(PythonEngine* pythonEngine, QWidget* parent = nullptr);
+    explicit REPLInterface(PythonEngine* pythonEngine, SettingsManager* settingsManager, QWidget* parent = nullptr);
     
     void setLayoutMode(const QString& mode);
     void focusInput();
@@ -42,11 +45,21 @@ private:
     void clearVariables();
     QString saveVariablesToPickle(const QString& customName = "", const QString& varName = "");
     QString loadVariablesFromPickle(const QString& filename);
+    QString listPickleFiles() const;
+    QString getDefaultPickleDirectory() const;
     QString getHelpText() const;
+    
+    // File picker methods
+    void startFilePicker();
+    void updateFilePickerDisplay();
+    void selectFile(int direction); // -1 for up, +1 for down
+    void confirmFileSelection();
+    void cancelFilePicker();
     QString formatPrompt(const QString& command) const;
     QString formatResult(const QString& result) const;
     
     PythonEngine* pythonEngine;
+    SettingsManager* settingsManager;
     
     // UI Components
     QVBoxLayout* mainLayout;
@@ -60,4 +73,9 @@ private:
     QStringList commandHistory;
     int historyIndex;
     bool executingCommand;
+    
+    // File picker state
+    bool filePickerMode;
+    QStringList availableFiles;
+    int selectedFileIndex;
 };
