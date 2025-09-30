@@ -65,6 +65,15 @@ target_link_libraries(repl_gui_modular PRIVATE
     Qt6::Network
 )
 
+# Override build type for LumosWorkspace target - use Release optimizations
+# even when project is built with Debug
+target_compile_options(LumosWorkspace PRIVATE
+    $<$<CONFIG:Debug>:-O2 -DNDEBUG>  # Use Release optimizations in Debug builds
+)
+target_compile_options(repl_gui_modular PRIVATE
+    $<$<CONFIG:Debug>:-O2 -DNDEBUG>  # Use Release optimizations in Debug builds
+)
+
 # Python library and required system libraries for both targets
 find_library(INTL_LIB intl PATHS /opt/homebrew/lib /usr/local/lib)
 if(INTL_LIB)
@@ -169,4 +178,24 @@ if(APPLE)
     
     message(STATUS "Configured macOS application bundle for LumosWorkspace")
     message(STATUS "Use 'make install' to install to /Applications/LumosWorkspace.app")
+endif()
+
+# ApplicationDeployment integration for LumosWorkspace target
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/ApplicationDeployment/deployment.cmake")
+    include("${CMAKE_SOURCE_DIR}/third_party/ApplicationDeployment/deployment.cmake")
+    
+    # Apply deployment configuration to the LumosWorkspace target
+    qt_deploy_application(LumosWorkspace
+        MACOS_DEPLOYMENT_TARGET "10.15"
+        MACOS_ARCHITECTURES "x86_64;arm64"  # Universal binary
+    )
+    
+    message(STATUS "ApplicationDeployment configured for LumosWorkspace target")
+    message(STATUS "Available deployment builds:")
+    message(STATUS "  - macOS: ./third_party/ApplicationDeployment/build-parent.sh . LumosWorkspace macos monterey")
+    message(STATUS "  - Linux: ./third_party/ApplicationDeployment/build-parent.sh . LumosWorkspace linux ubuntu 22.04")
+    message(STATUS "  - Windows: ./third_party/ApplicationDeployment/build-parent.sh . LumosWorkspace windows")
+else()
+    message(STATUS "ApplicationDeployment not integrated - using standard build only")
+    message(STATUS "To enable deployment: Ensure third_party/ApplicationDeployment/deployment.cmake exists")
 endif()

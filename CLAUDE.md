@@ -18,7 +18,9 @@ This project uses CMake with the following configuration:
 ### Dependencies
 
 - **CPython 3.13**: Located in `third_party/cpython/` - provides the embedded Python interpreter
-- **Google Test**: Located in `third_party/googletest/` - testing framework
+- **Google Test**: Located in `third_party/googletest/` - testing framework  
+- **Qt6** (optional): For GUI applications - detected automatically by CMake
+- **nlohmann/json**: For TCP protocol serialization - header-only library in `third_party/`
 - **gettext/libintl**: Required for Python's locale module support
 
 ### Building the Project
@@ -31,8 +33,12 @@ cmake ..
 # Build the project (use parallel jobs for faster builds)
 make -j6
 
-# Run the simple application with Python integration
-./src/applications/simple/simple
+# Available applications:
+./src/applications/simple/simple           # Basic Python embedding demo
+./src/applications/repl/repl               # Command-line Python REPL
+./src/applications/repl_gui/repl_gui       # Qt6 GUI REPL with TCP (requires Qt6)
+./src/applications/repl_gui/repl_gui_modular # Modular version with separate components
+./src/applications/simple_transmitter/simple_transmitter # Data transmission utility
 ```
 
 ### Running Tests
@@ -42,17 +48,38 @@ make -j6
 ctest
 # Or run tests with verbose output
 ctest -V
+
+# Run individual module tests
+./src/modules/tcp_server/test/tcp_server_test
+./src/modules/tcp_client/test/tcp_client_test  
+./src/modules/settings_handler/test/settings_handler_test
 ```
 
 ## Architecture
 
-The project follows a standard C++ project structure with Python integration:
+The project is organized into multiple applications and reusable modules:
 
-- `src/applications/simple/` - Contains the main application demonstrating Python embedding
+### Applications
+- `src/applications/simple/` - Basic Python embedding demonstration
+- `src/applications/repl/` - Command-line Python REPL
+- `src/applications/repl_gui/` - Qt6-based GUI Python REPL with TCP data injection
+- `src/applications/simple_transmitter/` - Data transmission utilities
+- `src/applications/gui_test/` - GUI component testing
+
+### Core Modules
+- `src/modules/python_engine.*` - Encapsulated Python interpreter management
+- `src/modules/tcp_server/` - TCP server for real-time data injection
+- `src/modules/tcp_client/` - TCP client utilities  
+- `src/modules/settings_handler/` - Cross-platform settings persistence
+- `src/modules/main_window.*` - Main Qt window management
+- `src/modules/ui_theme_manager.*` - UI theming system
+- `src/modules/variables_panel.*` - Python variables display
+
+### Third-Party Dependencies
 - `third_party/cpython/` - Full CPython 3.13 source and build artifacts
 - `third_party/googletest/` - Google Test framework
-- `CMakeLists.txt` - Root CMake configuration with Python support
-- `build/` - Build artifacts (generated)
+- `third_party/nlohmann/` - JSON library for TCP protocol
+- `third_party/ApplicationDeployment/` - Deployment utilities
 
 ## Python Integration Details
 
@@ -74,6 +101,8 @@ The application automatically configures:
 1. **Headers**: `third_party/cpython/Include/` and `third_party/cpython/` for `pyconfig.h`
 2. **Libraries**: Links against `libpython3.13.a` and required system libraries (intl, dl, util, m)
 3. **Runtime**: Sets environment variables to locate Python standard library
+4. **GIL Management**: Thread-safe access to Python interpreter through `PyGILState_Ensure`/`PyGILState_Release`
+5. **Memory Management**: Proper reference counting with `Py_INCREF`/`Py_DECREF` for all Python objects
 
 ## Development Workflow
 
@@ -111,6 +140,25 @@ Example: Client sends `{"type": "int_list", "name": "received_data"}` + `[1,2,3,
 - **Error Handling**: Graceful handling of malformed data or Python injection failures
 - **Memory Management**: Proper Python reference counting for injected objects
 
+## GUI Application Features
+
+The Qt6 GUI application (`repl_gui`) provides advanced features:
+
+### Layout Modes
+- **Bottom Input Mode**: Traditional REPL with input box at bottom
+- **Inline Input Mode**: Input appears directly in output area at cursor position
+- Switch modes via `repl_gui → Settings` menu
+
+### Debug API
+- Optional debug TCP server on port 8081 (enabled with `ENABLE_DEBUG_PORT`)
+- JSON-based command protocol for automated testing
+- Available commands: `execute`, `get_output`, `get_variables`, `clear_output`, `get_input`, `set_input`, `ping`
+
+### Settings Persistence  
+- Cross-platform settings storage via `SettingsHandler` module
+- Persists window geometry, UI preferences, layout mode, and color themes
+- Settings locations: macOS (`~/Library/Application Support/`), Linux (`~/.config/`), Windows (`AppData`)
+
 ## Important Notes
 
 - The Python interpreter runs in the same process as the C++ application
@@ -118,3 +166,5 @@ Example: Client sends `{"type": "int_list", "name": "received_data"}` + `[1,2,3,
 - All Python objects require proper reference counting and cleanup
 - The integration supports full bidirectional data exchange between C++ and Python
 - TCP data injection requires careful thread synchronization due to Python's GIL
+- Qt6 is optional - project builds successfully without it, skipping GUI applications
+- Debug features are conditional compilation controlled by `ENABLE_DEBUG_PORT` CMake option
